@@ -1,0 +1,32 @@
+Command: ninja all
+[1/23] Linking C static library esp-idf\esp_partition\libesp_partition.a
+[2/23] Linking C static library esp-idf\app_update\libapp_update.a
+[3/23] Performing build step for 'bootloader'
+[1/1] C:\Windows\system32\cmd.exe /C "cd /D C:\Users\Dell\ESP32_device\NRF24\build_rx\bootloader && C:\Espressif\tools\python\v6.0\venv\Scripts\python.exe C:/esp/v6.0/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 C:/Users/Dell/ESP32_device/NRF24/build_rx/bootloader/bootloader.bin"
+Bootloader binary size 0x57e0 bytes. 0x2820 bytes (31%) free.
+[4/23] Building C object esp-idf/main/CMakeFiles/__idf_main.dir/app_main.c.obj
+[5/23] No install step for 'bootloader'
+[6/23] Linking C static library esp-idf\esp_bootloader_format\libesp_bootloader_format.a
+[7/23] Completed 'bootloader'
+[8/23] Linking C static library esp-idf\esp_app_format\libesp_app_format.a
+[9/23] Linking C static library esp-idf\esp_hal_security\libesp_hal_security.a
+[10/23] Linking C static library esp-idf\esp_hal_mspi\libesp_hal_mspi.a
+[11/23] Linking C static library esp-idf\esp_hal_clock\libesp_hal_clock.a
+[12/23] Linking C static library esp-idf\esp_hal_gpspi\libesp_hal_gpspi.a
+[13/23] Linking C static library esp-idf\esp_hal_dma\libesp_hal_dma.a
+[14/23] Linking C static library esp-idf\esp_stdio\libesp_stdio.a
+[15/23] Linking C static library esp-idf\xtensa\libxtensa.a
+[16/23] Linking C static library esp-idf\esp_psram\libesp_psram.a
+[17/23] Linking C static library esp-idf\esp_driver_spi\libesp_driver_spi.a
+[18/23] Linking C static library esp-idf\main\libmain.a
+[19/23] Generating esp-idf/esp_system/ld/sections.ld
+[20/23] Building C object CMakeFiles/NRF24.elf.dir/project_elf_src_esp32s3.c.obj
+[21/23] Linking CXX executable NRF24.elf
+[22/23] Generating binary image from built executable
+esptool v5.3.dev2
+Creating ESP32-S3 image...
+Merged 2 ELF sections.
+Successfully created ESP32-S3 image.
+Generated C:/Users/Dell/ESP32_device/NRF24/build_rx/NRF24.bin
+[23/23] C:\Windows\system32\cmd.exe /C "cd /D C:\Users\Dell\ESP32_device\NRF24\build_rx && C:\Espressif\tools\python\v6.0\venv\Scripts\python.exe C:/esp/v6.0/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 partition --type app C:/Users/Dell/ESP32_device/NRF24/build_rx/partition_table/partition-table.bin C:/Users/Dell/ESP32_device/NRF24/build_rx/NRF24.bin"
+NRF24.bin binary size 0x2a360 bytes. Smallest app partition is 0x180000 bytes. 0x155ca0 bytes (89%) free.

@@ -1,0 +1,162 @@
+menu "NRF24 Configuration"
+
+    choice NRF24_PROJECT_MODE
+        prompt "Project mode"
+        default NRF24_MODE_TUTORIAL_DEBUG
+
+        config NRF24_MODE_TUTORIAL_DEBUG
+            bool "Tutorial Debug (teaching + diagnostics)"
+
+        config NRF24_MODE_RELEASE_LITE
+            bool "Release Lite (minimal logs + simple config)"
+    endchoice
+
+    choice NRF24_APP_ROLE
+        prompt "Application role"
+        default NRF24_ROLE_TX
+
+        config NRF24_ROLE_TX
+            bool "TX role (periodic sender)"
+        config NRF24_ROLE_RX
+            bool "RX role (listener)"
+    endchoice
+
+    config NRF24_SPI_HOST
+        int "SPI host (2=SPI2_HOST, 3=SPI3_HOST)"
+        range 2 3
+        default 2
+
+    config NRF24_PIN_MOSI
+        int "MOSI GPIO"
+        default 13
+
+    config NRF24_PIN_MISO
+        int "MISO GPIO"
+        default 12
+
+    config NRF24_PIN_SCK
+        int "SCK GPIO"
+        default 14
+
+    config NRF24_PIN_CSN
+        int "CSN GPIO"
+        default 11
+
+    config NRF24_PIN_CE
+        int "CE GPIO"
+        default 10
+
+    config NRF24_PIN_IRQ
+        int "IRQ GPIO"
+        default 3
+
+    config NRF24_CHANNEL
+        int "RF channel (0-125)"
+        range 0 125
+        default 40
+
+    config NRF24_PAYLOAD_SIZE
+        int "Static payload size (bytes)"
+        range 1 32
+        default 32
+
+    choice NRF24_DATA_RATE
+        prompt "Air data rate"
+        default NRF24_DATA_RATE_1M
+
+        config NRF24_DATA_RATE_1M
+            bool "1 Mbps"
+        config NRF24_DATA_RATE_2M
+            bool "2 Mbps"
+        config NRF24_DATA_RATE_250K
+            bool "250 Kbps"
+    endchoice
+
+    choice NRF24_PA_LEVEL
+        prompt "TX power level"
+        default NRF24_PA_12DBM if NRF24_MODE_TUTORIAL_DEBUG
+        default NRF24_PA_0DBM if NRF24_MODE_RELEASE_LITE
+
+        config NRF24_PA_18DBM
+            bool "-18 dBm"
+        config NRF24_PA_12DBM
+            bool "-12 dBm"
+        config NRF24_PA_6DBM
+            bool "-6 dBm"
+        config NRF24_PA_0DBM
+            bool "0 dBm"
+    endchoice
+
+    config NRF24_ADDR_WIDTH
+        int "Address width (bytes)"
+        range 3 5
+        default 5
+
+    config NRF24_PIPE0_ADDR
+        string "Pipe0 address (hex, no 0x, e.g. E7E7E7E7E7)"
+        default "E7E7E7E7E7"
+
+    config NRF24_PIPE1_ADDR
+        string "Pipe1 address (hex, no 0x, e.g. C2C2C2C2C2)"
+        default "C2C2C2C2C2"
+        depends on NRF24_MODE_TUTORIAL_DEBUG
+
+    config NRF24_TX_ADDR
+        string "TX address (hex, no 0x)"
+        default "E7E7E7E7E7"
+
+    config NRF24_ENABLE_PIPE1
+        bool "Enable RX pipe1"
+        default y
+        depends on NRF24_MODE_TUTORIAL_DEBUG
+
+    config NRF24_AUTO_RETR_DELAY_US
+        int "Auto retransmit delay (us, step 250)"
+        range 250 4000
+        default 750
+        depends on NRF24_MODE_TUTORIAL_DEBUG
+
+    config NRF24_AUTO_RETR_COUNT
+        int "Auto retransmit count"
+        range 0 15
+        default 10
+        depends on NRF24_MODE_TUTORIAL_DEBUG
+
+    config NRF24_TX_PERIOD_MS
+        int "TX task period (ms)"
+        range 10 60000
+        default 1000
+
+    config NRF24_TX_POWER_SAVE
+        bool "Power down between TX cycles"
+        default y
+        depends on NRF24_MODE_TUTORIAL_DEBUG
+
+    config NRF24_TX_DISABLE_AUTO_ACK_TEST
+        bool "TX test: disable auto-ack"
+        default n
+        depends on NRF24_MODE_TUTORIAL_DEBUG
+        help
+            Disable auto-ack on TX side for link bring-up diagnostics.
+            If this makes packets appear on RX, then ACK path is the blocker.
+
+    config NRF24_PIN_TEST_MODE
+        bool "Enable pin self-test mode"
+        default n
+        depends on NRF24_MODE_TUTORIAL_DEBUG
+        help
+            Run GPIO self-test only. The app will not start normal NRF24 TX/RX flow.
+            CE/CSN are toggled periodically and pin states are logged.
+
+    config NRF24_PIN_TEST_PERIOD_MS
+        int "Pin self-test toggle period (ms)"
+        range 100 5000
+        default 500
+        depends on NRF24_PIN_TEST_MODE
+
+    config NRF24_LOG_LEVEL_VERBOSE
+        bool "Verbose driver logging"
+        default y if NRF24_MODE_TUTORIAL_DEBUG
+        default n if NRF24_MODE_RELEASE_LITE
+
+endmenu

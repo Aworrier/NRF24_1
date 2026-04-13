@@ -1,0 +1,8 @@
+Command: ninja all
+[1/4] C:\Windows\system32\cmd.exe /C "cd /D C:\Users\Dell\ESP32_device\NRF24\build_rx && C:\Espressif\tools\python\v6.0\venv\Scripts\python.exe C:/esp/v6.0/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 partition --type app C:/Users/Dell/ESP32_device/NRF24/build_rx/partition_table/partition-table.bin C:/Users/Dell/ESP32_device/NRF24/build_rx/NRF24.bin"
+NRF24.bin binary size 0x2a360 bytes. Smallest app partition is 0x180000 bytes. 0x155ca0 bytes (89%) free.
+[2/4] Performing build step for 'bootloader'
+[1/1] C:\Windows\system32\cmd.exe /C "cd /D C:\Users\Dell\ESP32_device\NRF24\build_rx\bootloader && C:\Espressif\tools\python\v6.0\venv\Scripts\python.exe C:/esp/v6.0/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x0 C:/Users/Dell/ESP32_device/NRF24/build_rx/bootloader/bootloader.bin"
+Bootloader binary size 0x57e0 bytes. 0x2820 bytes (31%) free.
+[3/4] No install step for 'bootloader'
+[4/4] Completed 'bootloader'
