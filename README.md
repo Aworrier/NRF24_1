@@ -43,6 +43,7 @@
 - [docs/quickstart.md](docs/quickstart.md)：从接线到双板收发的最短路径
 - [docs/debug-playbook.md](docs/debug-playbook.md)：常见故障的排查剧本
 - [docs/advanced.md](docs/advanced.md)：ACK、速率、IRQ 等进阶主题
+- [docs/vscode-workflow.md](docs/vscode-workflow.md)：基于 VS Code 的开发流程（插件、驱动、资料检索）
 
 ## 4. 模式说明
 
