@@ -1,6 +1,7 @@
 import threading
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
+from datetime import datetime, timedelta
 
 import serial
 from serial.tools import list_ports
@@ -26,6 +27,8 @@ class Nrf24ControllerApp:
         self.payload_var = tk.StringVar(value="HELLO_NRF24")
         self.auto_poll_var = tk.BooleanVar(value=True)
         self.poll_interval_ms = 1000
+        self.schedule_time_var = tk.StringVar(value="11:05:00")
+        self.scheduled_send_job = None
 
         self.stat_vars = {
             "role": tk.StringVar(value="-"),
@@ -93,6 +96,14 @@ class Nrf24ControllerApp:
         tk.Button(btns, text="查询状态", command=self._query_status, width=12).pack(side=tk.LEFT, padx=6)
         tk.Button(btns, text="重置统计", command=self._reset_stats, width=12).pack(side=tk.LEFT, padx=6)
         tk.Checkbutton(btns, text="自动轮询", variable=self.auto_poll_var).pack(side=tk.LEFT, padx=6)
+
+        sched = tk.LabelFrame(self.root, text="定时发送")
+        sched.pack(fill=tk.X, padx=10, pady=6)
+        tk.Label(sched, text="开始时间").grid(row=0, column=0, padx=6, pady=8, sticky="w")
+        tk.Entry(sched, textvariable=self.schedule_time_var, width=12).grid(row=0, column=1, padx=6)
+        tk.Label(sched, text="格式: HH:MM 或 HH:MM:SS").grid(row=0, column=2, padx=6, sticky="w")
+        tk.Button(sched, text="定时发送突发包", command=self._schedule_burst_at_time, width=16).grid(row=0, column=3, padx=8)
+        tk.Button(sched, text="取消定时", command=self._cancel_scheduled_burst, width=10).grid(row=0, column=4, padx=8)
 
         stats = tk.LabelFrame(self.root, text="ACK / RX 可靠性统计")
         stats.pack(fill=tk.X, padx=10, pady=6)
@@ -306,6 +317,57 @@ class Nrf24ControllerApp:
     def _reset_stats(self) -> None:
         self._send_line("RESETSTATS")
 
+    def _parse_schedule_datetime(self, text: str):
+        text = text.strip()
+        now = datetime.now()
+
+        for fmt in ("%H:%M:%S", "%H:%M"):
+            try:
+                t = datetime.strptime(text, fmt).time()
+                target = datetime.combine(now.date(), t)
+                if target <= now:
+                    target = target + timedelta(days=1)
+                return target
+            except ValueError:
+                continue
+        return None
+
+    def _schedule_burst_at_time(self) -> None:
+        target = self._parse_schedule_datetime(self.schedule_time_var.get())
+        if target is None:
+            messagebox.showerror("错误", "时间格式无效，请输入 HH:MM 或 HH:MM:SS")
+            return
+
+        if self.ser is None:
+            messagebox.showerror("错误", "请先连接串口后再定时")
+            return
+
+        self._cancel_scheduled_burst(log_cancel=False)
+
+        delay_sec = (target - datetime.now()).total_seconds()
+        if delay_sec < 0:
+            delay_sec = 0
+
+        delay_ms = int(delay_sec * 1000)
+        self.scheduled_send_job = self.root.after(delay_ms, self._run_scheduled_burst)
+        self._log(f"已设置定时发送: {target.strftime('%Y-%m-%d %H:%M:%S')} (约 {delay_sec:.1f}s 后触发)")
+
+    def _run_scheduled_burst(self) -> None:
+        self.scheduled_send_job = None
+        self._log(f"触发定时发送: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self._send_burst()
+
+    def _cancel_scheduled_burst(self, log_cancel: bool = True) -> None:
+        if self.scheduled_send_job is None:
+            return
+        try:
+            self.root.after_cancel(self.scheduled_send_job)
+        except Exception:
+            pass
+        self.scheduled_send_job = None
+        if log_cancel:
+            self._log("已取消定时发送")
+
     def _show_help(self) -> None:
         text = (
             "功能说明\n"
@@ -316,6 +378,11 @@ class Nrf24ControllerApp:
             "5. 查询状态: 主动发送 STATUS，刷新 ACK/RX 统计。\n"
             "6. 重置统计: 发送 RESETSTATS，清零统计计数。\n"
             "7. 自动轮询: 每秒自动查询 STATUS，不会自动发送业务载荷。\n\n"
+            "定时发送\n"
+            "- 在“开始时间”输入 HH:MM 或 HH:MM:SS，例如 11:05 或 11:05:00。\n"
+            "- 点击“定时发送突发包”后，到点会自动执行一次“发送突发包”。\n"
+            "- 若该时间今天已过，会自动安排到明天同一时间。\n"
+            "- 可用“取消定时”取消未触发的任务。\n\n"
             "模式说明\n"
             "- ASCII: 按文本发送，如 HELLO。\n"
             "- HEX: 按十六进制发送，如 101010 或 A1B2C3（必须偶数位）。\n\n"
@@ -330,6 +397,7 @@ def main() -> None:
     app = Nrf24ControllerApp(root)
 
     def on_close() -> None:
+        app._cancel_scheduled_burst(log_cancel=False)
         app._disconnect()
         root.destroy()
 
