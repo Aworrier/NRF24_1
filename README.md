@@ -29,6 +29,23 @@
 
 建议：在 NRF24 模块 VCC/GND 旁边加 10uF + 0.1uF 去耦。
 
+### 2.1 经典 ESP32_32（WROOM）连线建议
+
+如果你使用的是经典 ESP32（非 S2/S3/C3），请避免使用 GPIO6~GPIO11（通常连接板载 Flash）。
+
+推荐映射（VSPI）：
+
+| ESP32 | NRF24L01+ |
+|---|---|
+| GPIO23 | MOSI |
+| GPIO19 | MISO |
+| GPIO18 | SCK |
+| GPIO5  | CSN |
+| GPIO17 | CE |
+| GPIO16 | IRQ |
+
+如果你的开发板这几个管脚已被占用，可在 menuconfig 的 NRF24 菜单中改 pin 配置。
+
 ## 3. 仓库结构
 
 - [main/nrf24.h](main/nrf24.h)：驱动接口（尽量保持稳定）
@@ -122,3 +139,79 @@ idf.py -p <TX_PORT> flash monitor
 1. 先用 Tutorial Debug 跑通
 2. 再切到 Release Lite
 3. 最后只保留必要日志和固定参数
+
+## 9. 方案A：上位机串口控制 ESP32 触发 nRF24 发包
+
+当前工程已支持在 TX 角色下，通过串口命令控制“是否发送”和“连续发送 N 包”。
+
+### 9.1 固件侧命令
+
+串口默认波特率使用 `CONFIG_ESP_CONSOLE_UART_BAUDRATE`（默认 115200）。
+
+- `ENABLE 1`：允许发送
+- `ENABLE 0`：禁止发送（并中止正在发送的 burst）
+- `STATUS`：查询当前是否允许发送
+- `RESETSTATS`：清空发送/接收统计计数
+- `STOP`：中止当前 burst
+- `BURST <count> <interval_ms> <ascii_payload>`：发送 ASCII 载荷
+- `BURSTHEX <count> <interval_ms> <hex_payload>`：发送 HEX 载荷（例如 `A1B2C3`）
+
+注意：nRF24 单包上限 32 字节；如果 payload 超过 32 字节会自动截断。
+
+### 9.1.1 无线二进制协议帧（用于可靠性测试）
+
+固件现在发送固定二进制协议帧（含序号与 CRC16）：
+
+- `magic0`(1B): `0xA5`
+- `magic1`(1B): `0x5A`
+- `ver`(1B): `0x01`
+- `seq`(2B): 小端递增序号
+- `payload_len`(1B): 有效载荷长度
+- `flags`(1B): 预留
+- `reserved`(1B): 预留
+- `payload`(0~22B)
+- `crc16`(2B): CRC16-CCITT（对 header+payload 计算）
+
+RX 端会对该帧做完整校验并统计：`crc_fail`、`seq_gap`、`dup`、`ooo`（乱序）等指标。
+
+### 9.1.2 STATUS 返回格式
+
+- TX 角色返回：
+	- `STAT role=TX ... ack_ok=... ack_fail=... retries_sum=... retries_max=... next_seq=...`
+- RX 角色返回：
+	- `STAT role=RX ... rx_pkt=... frame_ok=... crc_fail=... gap=... dup=... ooo=...`
+
+### 9.2 上位机 GUI（Python）
+
+仓库已提供上位机脚本：`tools/pc_nrf24_controller.py`。
+
+安装依赖：
+
+```bash
+pip install pyserial
+```
+
+运行：
+
+```bash
+python tools/pc_nrf24_controller.py
+```
+
+GUI 功能：
+
+- 选择串口并连接
+- 勾选/取消 Enable TX（对应 `ENABLE 1/0`）
+- 配置 Count、Interval、Payload
+- 选择 ASCII 或 HEX 模式并发送 burst
+- 停止当前发送、查询状态、重置统计
+- 实时显示 ACK 统计与 RX 可靠性统计面板（解析 `STAT ...`）
+
+### 9.3 典型联调步骤
+
+1. TX 板烧录并打开 monitor，确认看到 `NRF24 app started. role=TX`
+2. 运行上位机 GUI，连接对应 COM 口
+3. 先点一次 Enable TX
+4. 输入 `count=20`、`interval=20`、payload（如 `HELLO`）后发送
+5. 在 TX 日志观察 `TX ok seq=...`，在 RX 板观察 `RX pipe=...`
+
+如果发送失败较多，可先把 Air data rate 调到 250K，再检查供电去耦与地址/频道一致性。
