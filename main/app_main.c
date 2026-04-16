@@ -7,9 +7,11 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "ble_ctrl.h"
 #include "nrf24.h"
 
 /*
@@ -64,6 +66,11 @@ typedef struct {
 
 static app_tx_stats_t s_tx_stats = {0};
 static app_rx_stats_t s_rx_stats = {0};
+
+typedef enum {
+    APP_CMD_SRC_UART = 0,
+    APP_CMD_SRC_BLE,
+} app_cmd_src_t;
 
 static uint16_t app_crc16_ccitt(const uint8_t *data, size_t len)
 {
@@ -603,12 +610,20 @@ static bool app_parse_u32_token(char **p, uint32_t *out)
     return true;
 }
 
-static void app_uart_reply(const char *msg)
+static void app_send_reply(app_cmd_src_t src, const char *msg)
 {
     if (msg == NULL) {
         return;
     }
-    printf("%s\n", msg);
+
+    if (src == APP_CMD_SRC_UART) {
+        printf("%s\n", msg);
+        return;
+    }
+
+    if (ble_ctrl_send_line(msg) != ESP_OK) {
+        ESP_LOGW(TAG, "BLE reply dropped (not connected): %s", msg);
+    }
 }
 
 static void app_reset_stats(void)
@@ -617,33 +632,41 @@ static void app_reset_stats(void)
     memset(&s_rx_stats, 0, sizeof(s_rx_stats));
 }
 
-static void app_reply_stats(void)
+static void app_reply_stats(app_cmd_src_t src)
 {
+    char line[192] = {0};
+
 #if defined(CONFIG_NRF24_ROLE_TX)
-    printf("STAT role=TX enabled=%d queued=%lu sent=%lu ack_ok=%lu ack_fail=%lu retries_sum=%lu retries_max=%lu next_seq=%u\n",
-           s_tx_enabled ? 1 : 0,
-           (unsigned long)s_tx_stats.burst_queued,
-           (unsigned long)s_tx_stats.frame_sent,
-           (unsigned long)s_tx_stats.tx_ok,
-           (unsigned long)s_tx_stats.tx_fail,
-           (unsigned long)s_tx_stats.retries_sum,
-           (unsigned long)s_tx_stats.retries_max,
-           (unsigned)s_tx_stats.next_seq);
+    snprintf(line,
+             sizeof(line),
+             "STAT role=TX enabled=%d queued=%lu sent=%lu ack_ok=%lu ack_fail=%lu retries_sum=%lu retries_max=%lu next_seq=%u",
+             s_tx_enabled ? 1 : 0,
+             (unsigned long)s_tx_stats.burst_queued,
+             (unsigned long)s_tx_stats.frame_sent,
+             (unsigned long)s_tx_stats.tx_ok,
+             (unsigned long)s_tx_stats.tx_fail,
+             (unsigned long)s_tx_stats.retries_sum,
+             (unsigned long)s_tx_stats.retries_max,
+             (unsigned)s_tx_stats.next_seq);
 #else
-    printf("STAT role=RX rx_pkt=%lu frame_ok=%lu crc_fail=%lu magic_fail=%lu len_fail=%lu dup=%lu ooo=%lu gap=%lu last_seq=%u\n",
-           (unsigned long)s_rx_stats.rx_packets,
-           (unsigned long)s_rx_stats.frame_ok,
-           (unsigned long)s_rx_stats.crc_fail,
-           (unsigned long)s_rx_stats.magic_fail,
-           (unsigned long)s_rx_stats.len_fail,
-           (unsigned long)s_rx_stats.seq_dup,
-           (unsigned long)s_rx_stats.seq_out_of_order,
-           (unsigned long)s_rx_stats.seq_gap,
-           (unsigned)s_rx_stats.last_seq);
+    snprintf(line,
+             sizeof(line),
+             "STAT role=RX rx_pkt=%lu frame_ok=%lu crc_fail=%lu magic_fail=%lu len_fail=%lu dup=%lu ooo=%lu gap=%lu last_seq=%u",
+             (unsigned long)s_rx_stats.rx_packets,
+             (unsigned long)s_rx_stats.frame_ok,
+             (unsigned long)s_rx_stats.crc_fail,
+             (unsigned long)s_rx_stats.magic_fail,
+             (unsigned long)s_rx_stats.len_fail,
+             (unsigned long)s_rx_stats.seq_dup,
+             (unsigned long)s_rx_stats.seq_out_of_order,
+             (unsigned long)s_rx_stats.seq_gap,
+             (unsigned)s_rx_stats.last_seq);
 #endif
+
+    app_send_reply(src, line);
 }
 
-static void app_handle_uart_line(char *line)
+static void app_handle_command_line(char *line, app_cmd_src_t src)
 {
     app_trim_right(line);
     char *cmd = app_trim_left(line);
@@ -652,21 +675,21 @@ static void app_handle_uart_line(char *line)
     }
 
     if (strcmp(cmd, "STATUS") == 0) {
-        app_reply_stats();
+        app_reply_stats(src);
         return;
     }
 
     if (strcmp(cmd, "RESETSTATS") == 0) {
         app_reset_stats();
-        app_uart_reply("OK RESET");
+        app_send_reply(src, "OK RESET");
         return;
     }
 
     if (strcmp(cmd, "HELP") == 0) {
 #if defined(CONFIG_NRF24_ROLE_TX)
-        app_uart_reply("CMD: ENABLE <0|1>, BURST <count> <interval_ms> <ascii>, BURSTHEX <count> <interval_ms> <hex>, STOP, STATUS, RESETSTATS");
+        app_send_reply(src, "CMD: ENABLE <0|1>, BURST <count> <interval_ms> <ascii>, BURSTHEX <count> <interval_ms> <hex>, STOP, STATUS, RESETSTATS");
 #else
-        app_uart_reply("CMD: STATUS, RESETSTATS");
+        app_send_reply(src, "CMD: STATUS, RESETSTATS");
 #endif
         return;
     }
@@ -676,20 +699,20 @@ static void app_handle_uart_line(char *line)
         char *p = cmd + 6;
         uint32_t enabled = 0;
         if (!app_parse_u32_token(&p, &enabled) || (enabled > 1)) {
-            app_uart_reply("ERR usage: ENABLE <0|1>");
+            app_send_reply(src, "ERR usage: ENABLE <0|1>");
             return;
         }
         s_tx_enabled = (enabled == 1);
         if (!s_tx_enabled) {
             s_tx_abort = true;
         }
-        app_uart_reply(s_tx_enabled ? "OK ENABLED" : "OK DISABLED");
+        app_send_reply(src, s_tx_enabled ? "OK ENABLED" : "OK DISABLED");
         return;
     }
 
     if (strcmp(cmd, "STOP") == 0) {
         s_tx_abort = true;
-        app_uart_reply("OK STOPPED");
+        app_send_reply(src, "OK STOPPED");
         return;
     }
 
@@ -700,24 +723,24 @@ static void app_handle_uart_line(char *line)
     } else if (strncmp(cmd, "BURST", 5) == 0) {
         cmd += 5;
     } else {
-        app_uart_reply("ERR unknown command");
+        app_send_reply(src, "ERR unknown command");
         return;
     }
 
     uint32_t count = 0;
     uint32_t interval_ms = 0;
     if (!app_parse_u32_token(&cmd, &count) || count == 0) {
-        app_uart_reply("ERR invalid count");
+        app_send_reply(src, "ERR invalid count");
         return;
     }
     if (!app_parse_u32_token(&cmd, &interval_ms)) {
-        app_uart_reply("ERR invalid interval_ms");
+        app_send_reply(src, "ERR invalid interval_ms");
         return;
     }
 
     char *payload = app_trim_left(cmd);
     if (*payload == '\0') {
-        app_uart_reply("ERR empty payload");
+        app_send_reply(src, "ERR empty payload");
         return;
     }
 
@@ -727,7 +750,7 @@ static void app_handle_uart_line(char *line)
 
     if (is_hex) {
         if (!app_parse_hex_payload(payload, req.data, &req.len)) {
-            app_uart_reply("ERR invalid hex payload");
+            app_send_reply(src, "ERR invalid hex payload");
             return;
         }
     } else {
@@ -737,15 +760,15 @@ static void app_handle_uart_line(char *line)
     }
 
     if (xQueueSend(s_tx_cmd_queue, &req, pdMS_TO_TICKS(30)) != pdTRUE) {
-        app_uart_reply("ERR queue full");
+        app_send_reply(src, "ERR queue full");
         return;
     }
 
     s_tx_stats.burst_queued++;
 
-    app_uart_reply("OK queued");
+    app_send_reply(src, "OK queued");
 #else
-    app_uart_reply("ERR RX role: only STATUS/RESETSTATS supported");
+    app_send_reply(src, "ERR RX role: only STATUS/RESETSTATS supported");
 #endif
 }
 
@@ -754,15 +777,34 @@ static void app_uart_cmd_task(void *arg)
     (void)arg;
 
     char line[192] = {0};
-    app_uart_reply("READY type HELP for commands");
+    app_send_reply(APP_CMD_SRC_UART, "READY type HELP for commands");
 
     while (1) {
         if (fgets(line, sizeof(line), stdin) == NULL) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
-        app_handle_uart_line(line);
+        app_handle_command_line(line, APP_CMD_SRC_UART);
     }
+}
+
+static void app_ble_command_cb(const char *line, void *ctx)
+{
+    (void)ctx;
+
+    if (line == NULL) {
+        return;
+    }
+
+    char buf[192] = {0};
+    size_t cp = strlen(line);
+    if (cp >= sizeof(buf)) {
+        cp = sizeof(buf) - 1;
+    }
+    memcpy(buf, line, cp);
+    buf[cp] = '\0';
+
+    app_handle_command_line(buf, APP_CMD_SRC_BLE);
 }
 
 #if defined(CONFIG_NRF24_ROLE_TX)
@@ -933,7 +975,28 @@ static void app_start_tx_mode(void)
 
 static void app_start_uart_console(void)
 {
+#if CONFIG_NRF24_CONTROL_IF_UART
     xTaskCreate(app_uart_cmd_task, "uart_cmd", 4096, NULL, 9, NULL);
+#else
+    ESP_LOGI(TAG, "UART command interface disabled by config");
+#endif
+}
+
+static void app_start_ble_console(void)
+{
+#if CONFIG_NRF24_CONTROL_IF_BLE
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
+
+    ESP_ERROR_CHECK(ble_ctrl_init(CONFIG_NRF24_BLE_DEVICE_NAME, app_ble_command_cb, NULL));
+    ESP_LOGI(TAG, "BLE control ready. name=%s", CONFIG_NRF24_BLE_DEVICE_NAME);
+#else
+    ESP_LOGI(TAG, "BLE control disabled by config");
+#endif
 }
 
 void app_main(void)
@@ -979,6 +1042,7 @@ void app_main(void)
     ESP_ERROR_CHECK(nrf24_config_retransmit(CONFIG_NRF24_AUTO_RETR_DELAY_US, CONFIG_NRF24_AUTO_RETR_COUNT));
 
     app_start_uart_console();
+    app_start_ble_console();
     app_start_rx_mode();
     app_start_tx_mode();
 

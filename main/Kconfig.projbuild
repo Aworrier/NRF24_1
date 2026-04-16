@@ -159,4 +159,25 @@ menu "NRF24 Configuration"
         default y if NRF24_MODE_TUTORIAL_DEBUG
         default n if NRF24_MODE_RELEASE_LITE
 
+    menu "Control Interfaces"
+
+        config NRF24_CONTROL_IF_UART
+            bool "Enable UART command interface"
+            default y
+            help
+                Enable command input from serial console.
+
+        config NRF24_CONTROL_IF_BLE
+            bool "Enable BLE command interface (NUS compatible)"
+            default y
+            help
+                Enable command input over BLE GATT using Nordic UART Service UUID layout.
+
+        config NRF24_BLE_DEVICE_NAME
+            string "BLE device name"
+            default "NRF24-BLE-S3"
+            depends on NRF24_CONTROL_IF_BLE
+
+    endmenu
+
 endmenu

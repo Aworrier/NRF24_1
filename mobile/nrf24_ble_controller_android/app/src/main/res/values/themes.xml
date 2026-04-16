@@ -1,0 +1,8 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.Nrf24BleController" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#006A67</item>
+        <item name="colorPrimaryVariant">#004744</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="android:statusBarColor" tools:targetApi="l">@android:color/transparent</item>
+    </style>
+</resources>
