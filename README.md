@@ -61,6 +61,7 @@
 - [docs/debug-playbook.md](docs/debug-playbook.md)：常见故障的排查剧本
 - [docs/advanced.md](docs/advanced.md)：ACK、速率、IRQ 等进阶主题
 - [docs/vscode-workflow.md](docs/vscode-workflow.md)：基于 VS Code 的开发流程（插件、驱动、资料检索）
+- [docs/ble_mobile_control.md](docs/ble_mobile_control.md)：手机 BLE 上位机控制 NRF24 的完整流程
 
 ## 4. 模式说明
 
@@ -231,6 +232,7 @@ GUI 功能：
 
 如果发送失败较多，可先把 Air data rate 调到 250K，再检查供电去耦与地址/频道一致性。
 
+<<<<<<< HEAD
 ### 9.4 无线调试详细流程
 
 下面是连接热点之后的推荐调试流程。当前无线控制的设计是“ESP32 开热点，上位机通过 TCP 发命令”，因此**最推荐的调试终端仍然是电脑上的 GUI**。如果你只是用手机连上热点，也可以先用来确认热点是否正常，但真正发送命令还需要一个 TCP 客户端。
@@ -332,3 +334,54 @@ GUI 功能：
 - 有些手机 TCP 客户端默认会加自动换行设置，建议保持“发送行尾换行”开启。
 - 如果 App 支持“发送 HEX/ASCII 切换”，请确认发的是文本命令，不是二进制报文。
 - 若手机系统限制后台网络，调试时保持 App 处于前台。
+=======
+## 10. 方案B：手机 BLE 上位机控制 ESP32 触发 nRF24 发包
+
+项目现在支持 BLE GATT 控制通道，手机端可以直接下发命令控制 NRF24 收发。
+
+### 10.1 固件侧配置
+
+在 `menuconfig -> NRF24 Configuration -> Control Interfaces` 中配置：
+
+- `NRF24_CONTROL_IF_BLE = y`
+- `NRF24_BLE_DEVICE_NAME = NRF24-BLE-S3`（可自定义）
+
+然后执行：
+
+```bash
+idf.py set-target esp32s3
+idf.py build
+idf.py -p <PORT> flash monitor
+```
+
+### 10.2 手机上位机工程
+
+Android 工程位于：`mobile/nrf24_ble_controller_android`
+
+功能：
+
+- 扫描 BLE 设备并自动按服务 UUID 连接
+- 发送 `ENABLE / STATUS / RESETSTATS / STOP`
+- 发送 `BURST / BURSTHEX`
+- 订阅 Notify 接收 `OK/ERR/STAT` 回包
+
+### 10.3 BLE UUID
+
+- Service: `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
+- CMD(Write): `6E400002-B5A3-F393-E0A9-E50E24DCCA9E`
+- Notify: `6E400003-B5A3-F393-E0A9-E50E24DCCA9E`
+
+### 10.4 命令协议（与串口一致）
+
+- `HELP`
+- `STATUS`
+- `RESETSTATS`
+- `ENABLE 1|0`
+- `STOP`
+- `BURST <count> <interval_ms> <ascii_payload>`
+- `BURSTHEX <count> <interval_ms> <hex_payload>`
+
+详细流程、验收清单与风险规避请参考：
+
+- [docs/ble_mobile_control.md](docs/ble_mobile_control.md)
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1

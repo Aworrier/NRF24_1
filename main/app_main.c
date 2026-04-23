@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_rom_sys.h"
+<<<<<<< HEAD
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -18,6 +19,13 @@
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 #include "nvs_flash.h"
+=======
+#include "nvs_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
+#include "ble_ctrl.h"
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
 #include "nrf24.h"
 #include "sys/socket.h"
 #include <sys/time.h>
@@ -91,6 +99,7 @@ typedef struct {
 static app_tx_stats_t s_tx_stats = {0};
 static app_rx_stats_t s_rx_stats = {0};
 
+<<<<<<< HEAD
 typedef void (*app_control_send_fn_t)(void *user, const char *line);
 
 typedef struct {
@@ -102,6 +111,12 @@ static void app_control_send_uart(void *user, const char *line);
 static void app_control_send_socket(void *user, const char *line);
 static void app_control_reply(const app_control_io_t *io, const char *line);
 static void app_control_replyf(const app_control_io_t *io, const char *fmt, ...);
+=======
+typedef enum {
+    APP_CMD_SRC_UART = 0,
+    APP_CMD_SRC_BLE,
+} app_cmd_src_t;
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
 
 static uint16_t app_crc16_ccitt(const uint8_t *data, size_t len)
 {
@@ -643,12 +658,17 @@ static bool app_parse_u32_token(char **p, uint32_t *out)
     return true;
 }
 
+<<<<<<< HEAD
 static void app_control_send_uart(void *user, const char *line)
+=======
+static void app_send_reply(app_cmd_src_t src, const char *msg)
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
 {
     (void)user;
     if (line == NULL) {
         return;
     }
+<<<<<<< HEAD
     printf("%s\n", line);
 }
 
@@ -691,6 +711,17 @@ static void app_control_replyf(const app_control_io_t *io, const char *fmt, ...)
     vsnprintf(line, sizeof(line), fmt, ap);
     va_end(ap);
     app_control_reply(io, line);
+=======
+
+    if (src == APP_CMD_SRC_UART) {
+        printf("%s\n", msg);
+        return;
+    }
+
+    if (ble_ctrl_send_line(msg) != ESP_OK) {
+        ESP_LOGW(TAG, "BLE reply dropped (not connected): %s", msg);
+    }
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
 }
 
 static void app_reset_stats(void)
@@ -699,9 +730,16 @@ static void app_reset_stats(void)
     memset(&s_rx_stats, 0, sizeof(s_rx_stats));
 }
 
+<<<<<<< HEAD
 static void app_reply_stats(const app_control_io_t *io)
+=======
+static void app_reply_stats(app_cmd_src_t src)
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
 {
+    char line[192] = {0};
+
 #if defined(CONFIG_NRF24_ROLE_TX)
+<<<<<<< HEAD
     app_control_replyf(io, "STAT role=TX enabled=%d queued=%lu sent=%lu ack_ok=%lu ack_fail=%lu retries_sum=%lu retries_max=%lu next_seq=%u",
                        s_tx_enabled ? 1 : 0,
                        (unsigned long)s_tx_stats.burst_queued,
@@ -722,10 +760,42 @@ static void app_reply_stats(const app_control_io_t *io)
                        (unsigned long)s_rx_stats.seq_out_of_order,
                        (unsigned long)s_rx_stats.seq_gap,
                        (unsigned)s_rx_stats.last_seq);
+=======
+    snprintf(line,
+             sizeof(line),
+             "STAT role=TX enabled=%d queued=%lu sent=%lu ack_ok=%lu ack_fail=%lu retries_sum=%lu retries_max=%lu next_seq=%u",
+             s_tx_enabled ? 1 : 0,
+             (unsigned long)s_tx_stats.burst_queued,
+             (unsigned long)s_tx_stats.frame_sent,
+             (unsigned long)s_tx_stats.tx_ok,
+             (unsigned long)s_tx_stats.tx_fail,
+             (unsigned long)s_tx_stats.retries_sum,
+             (unsigned long)s_tx_stats.retries_max,
+             (unsigned)s_tx_stats.next_seq);
+#else
+    snprintf(line,
+             sizeof(line),
+             "STAT role=RX rx_pkt=%lu frame_ok=%lu crc_fail=%lu magic_fail=%lu len_fail=%lu dup=%lu ooo=%lu gap=%lu last_seq=%u",
+             (unsigned long)s_rx_stats.rx_packets,
+             (unsigned long)s_rx_stats.frame_ok,
+             (unsigned long)s_rx_stats.crc_fail,
+             (unsigned long)s_rx_stats.magic_fail,
+             (unsigned long)s_rx_stats.len_fail,
+             (unsigned long)s_rx_stats.seq_dup,
+             (unsigned long)s_rx_stats.seq_out_of_order,
+             (unsigned long)s_rx_stats.seq_gap,
+             (unsigned)s_rx_stats.last_seq);
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
 #endif
+
+    app_send_reply(src, line);
 }
 
+<<<<<<< HEAD
 static void app_handle_control_line(const app_control_io_t *io, char *line)
+=======
+static void app_handle_command_line(char *line, app_cmd_src_t src)
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
 {
     app_trim_right(line);
     char *cmd = app_trim_left(line);
@@ -734,21 +804,35 @@ static void app_handle_control_line(const app_control_io_t *io, char *line)
     }
 
     if (strcmp(cmd, "STATUS") == 0) {
+<<<<<<< HEAD
         app_reply_stats(io);
+=======
+        app_reply_stats(src);
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
         return;
     }
 
     if (strcmp(cmd, "RESETSTATS") == 0) {
         app_reset_stats();
+<<<<<<< HEAD
         app_control_reply(io, "OK RESET");
+=======
+        app_send_reply(src, "OK RESET");
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
         return;
     }
 
     if (strcmp(cmd, "HELP") == 0) {
 #if defined(CONFIG_NRF24_ROLE_TX)
+<<<<<<< HEAD
         app_control_reply(io, "CMD: ENABLE <0|1>, BURST <count> <interval_ms> <ascii>, BURSTHEX <count> <interval_ms> <hex>, STOP, STATUS, RESETSTATS");
 #else
         app_control_reply(io, "CMD: STATUS, RESETSTATS");
+=======
+        app_send_reply(src, "CMD: ENABLE <0|1>, BURST <count> <interval_ms> <ascii>, BURSTHEX <count> <interval_ms> <hex>, STOP, STATUS, RESETSTATS");
+#else
+        app_send_reply(src, "CMD: STATUS, RESETSTATS");
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
 #endif
         return;
     }
@@ -758,20 +842,32 @@ static void app_handle_control_line(const app_control_io_t *io, char *line)
         char *p = cmd + 6;
         uint32_t enabled = 0;
         if (!app_parse_u32_token(&p, &enabled) || (enabled > 1)) {
+<<<<<<< HEAD
             app_control_reply(io, "ERR usage: ENABLE <0|1>");
+=======
+            app_send_reply(src, "ERR usage: ENABLE <0|1>");
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
             return;
         }
         s_tx_enabled = (enabled == 1);
         if (!s_tx_enabled) {
             s_tx_abort = true;
         }
+<<<<<<< HEAD
         app_control_reply(io, s_tx_enabled ? "OK ENABLED" : "OK DISABLED");
+=======
+        app_send_reply(src, s_tx_enabled ? "OK ENABLED" : "OK DISABLED");
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
         return;
     }
 
     if (strcmp(cmd, "STOP") == 0) {
         s_tx_abort = true;
+<<<<<<< HEAD
         app_control_reply(io, "OK STOPPED");
+=======
+        app_send_reply(src, "OK STOPPED");
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
         return;
     }
 
@@ -782,24 +878,40 @@ static void app_handle_control_line(const app_control_io_t *io, char *line)
     } else if (strncmp(cmd, "BURST", 5) == 0) {
         cmd += 5;
     } else {
+<<<<<<< HEAD
         app_control_reply(io, "ERR unknown command");
+=======
+        app_send_reply(src, "ERR unknown command");
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
         return;
     }
 
     uint32_t count = 0;
     uint32_t interval_ms = 0;
     if (!app_parse_u32_token(&cmd, &count) || count == 0) {
+<<<<<<< HEAD
         app_control_reply(io, "ERR invalid count");
         return;
     }
     if (!app_parse_u32_token(&cmd, &interval_ms)) {
         app_control_reply(io, "ERR invalid interval_ms");
+=======
+        app_send_reply(src, "ERR invalid count");
+        return;
+    }
+    if (!app_parse_u32_token(&cmd, &interval_ms)) {
+        app_send_reply(src, "ERR invalid interval_ms");
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
         return;
     }
 
     char *payload = app_trim_left(cmd);
     if (*payload == '\0') {
+<<<<<<< HEAD
         app_control_reply(io, "ERR empty payload");
+=======
+        app_send_reply(src, "ERR empty payload");
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
         return;
     }
 
@@ -809,7 +921,11 @@ static void app_handle_control_line(const app_control_io_t *io, char *line)
 
     if (is_hex) {
         if (!app_parse_hex_payload(payload, req.data, &req.len)) {
+<<<<<<< HEAD
             app_control_reply(io, "ERR invalid hex payload");
+=======
+            app_send_reply(src, "ERR invalid hex payload");
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
             return;
         }
     } else {
@@ -819,15 +935,25 @@ static void app_handle_control_line(const app_control_io_t *io, char *line)
     }
 
     if (xQueueSend(s_tx_cmd_queue, &req, pdMS_TO_TICKS(30)) != pdTRUE) {
+<<<<<<< HEAD
         app_control_reply(io, "ERR queue full");
+=======
+        app_send_reply(src, "ERR queue full");
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
         return;
     }
 
     s_tx_stats.burst_queued++;
 
+<<<<<<< HEAD
     app_control_reply(io, "OK queued");
 #else
     app_control_reply(io, "ERR RX role: only STATUS/RESETSTATS supported");
+=======
+    app_send_reply(src, "OK queued");
+#else
+    app_send_reply(src, "ERR RX role: only STATUS/RESETSTATS supported");
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
 #endif
 }
 
@@ -840,13 +966,18 @@ static void app_uart_cmd_task(void *arg)
     };
 
     char line[192] = {0};
+<<<<<<< HEAD
     app_control_reply(&io, "READY type HELP for commands");
+=======
+    app_send_reply(APP_CMD_SRC_UART, "READY type HELP for commands");
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
 
     while (1) {
         if (fgets(line, sizeof(line), stdin) == NULL) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
+<<<<<<< HEAD
         app_handle_control_line(&io, line);
     }
 }
@@ -1057,6 +1188,31 @@ static void app_tcp_control_task(void *arg)
 }
 #endif
 
+=======
+        app_handle_command_line(line, APP_CMD_SRC_UART);
+    }
+}
+
+static void app_ble_command_cb(const char *line, void *ctx)
+{
+    (void)ctx;
+
+    if (line == NULL) {
+        return;
+    }
+
+    char buf[192] = {0};
+    size_t cp = strlen(line);
+    if (cp >= sizeof(buf)) {
+        cp = sizeof(buf) - 1;
+    }
+    memcpy(buf, line, cp);
+    buf[cp] = '\0';
+
+    app_handle_command_line(buf, APP_CMD_SRC_BLE);
+}
+
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
 #if defined(CONFIG_NRF24_ROLE_TX)
 static void app_tx_task(void *arg)
 {
@@ -1225,7 +1381,28 @@ static void app_start_tx_mode(void)
 
 static void app_start_uart_console(void)
 {
+#if CONFIG_NRF24_CONTROL_IF_UART
     xTaskCreate(app_uart_cmd_task, "uart_cmd", 4096, NULL, 9, NULL);
+#else
+    ESP_LOGI(TAG, "UART command interface disabled by config");
+#endif
+}
+
+static void app_start_ble_console(void)
+{
+#if CONFIG_NRF24_CONTROL_IF_BLE
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
+
+    ESP_ERROR_CHECK(ble_ctrl_init(CONFIG_NRF24_BLE_DEVICE_NAME, app_ble_command_cb, NULL));
+    ESP_LOGI(TAG, "BLE control ready. name=%s", CONFIG_NRF24_BLE_DEVICE_NAME);
+#else
+    ESP_LOGI(TAG, "BLE control disabled by config");
+#endif
 }
 
 static void app_start_control_wifi(void)
@@ -1279,7 +1456,11 @@ void app_main(void)
     ESP_ERROR_CHECK(nrf24_config_retransmit(CONFIG_NRF24_AUTO_RETR_DELAY_US, CONFIG_NRF24_AUTO_RETR_COUNT));
 
     app_start_uart_console();
+<<<<<<< HEAD
     app_start_control_wifi();
+=======
+    app_start_ble_console();
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
     app_start_rx_mode();
     app_start_tx_mode();
 

@@ -159,6 +159,7 @@ menu "NRF24 Configuration"
         default y if NRF24_MODE_TUTORIAL_DEBUG
         default n if NRF24_MODE_RELEASE_LITE
 
+<<<<<<< HEAD
     config NRF24_CONTROL_WIFI_ENABLE
         bool "Enable wireless control service"
         default y
@@ -203,5 +204,27 @@ menu "NRF24 Configuration"
         string "Wireless control token"
         default "nrf24"
         depends on NRF24_CONTROL_WIFI_ENABLE
+=======
+    menu "Control Interfaces"
+
+        config NRF24_CONTROL_IF_UART
+            bool "Enable UART command interface"
+            default y
+            help
+                Enable command input from serial console.
+
+        config NRF24_CONTROL_IF_BLE
+            bool "Enable BLE command interface (NUS compatible)"
+            default y
+            help
+                Enable command input over BLE GATT using Nordic UART Service UUID layout.
+
+        config NRF24_BLE_DEVICE_NAME
+            string "BLE device name"
+            default "NRF24-BLE-S3"
+            depends on NRF24_CONTROL_IF_BLE
+
+    endmenu
+>>>>>>> 60d7e4e3087daa288b53c0249b3cc0d8a3e662e1
 
 endmenu
