@@ -5,6 +5,11 @@ idf_component_register(
     INCLUDE_DIRS
         "."
     REQUIRES
+        esp_event
         esp_driver_gpio
         esp_driver_spi
+        esp_netif
+        esp_wifi
+        nvs_flash
+        lwip
 )

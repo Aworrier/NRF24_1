@@ -1,16 +1,27 @@
 #include <ctype.h>
+#include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "driver/gpio.h"
 #include "esp_check.h"
+#include "esp_event.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_rom_sys.h"
+#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "lwip/inet.h"
+#include "lwip/sockets.h"
+#include "nvs_flash.h"
 #include "nrf24.h"
+#include "sys/socket.h"
+#include <sys/time.h>
+#include <unistd.h>
 
 /*
  * app_main.c
@@ -23,6 +34,21 @@
  */
 
 static const char *TAG = "nrf24_app";
+
+#ifndef CONFIG_NRF24_CONTROL_WIFI_RX_SSID
+#define CONFIG_NRF24_CONTROL_WIFI_RX_SSID "NRF24_RX"
+#endif
+
+#ifndef CONFIG_NRF24_CONTROL_WIFI_TX_PREFIX
+#define CONFIG_NRF24_CONTROL_WIFI_TX_PREFIX "NRF24_TX"
+#endif
+
+#ifndef CONFIG_NRF24_CONTROL_WIFI_TX_ID
+#define CONFIG_NRF24_CONTROL_WIFI_TX_ID 1
+#endif
+
+#define APP_CONTROL_LINE_MAX 256
+#define APP_WIFI_CONTROL_MAX_CLIENTS 1
 
 #define APP_PROTO_MAGIC0 0xA5
 #define APP_PROTO_MAGIC1 0x5A
@@ -65,6 +91,18 @@ typedef struct {
 static app_tx_stats_t s_tx_stats = {0};
 static app_rx_stats_t s_rx_stats = {0};
 
+typedef void (*app_control_send_fn_t)(void *user, const char *line);
+
+typedef struct {
+    app_control_send_fn_t send_line;
+    void *user;
+} app_control_io_t;
+
+static void app_control_send_uart(void *user, const char *line);
+static void app_control_send_socket(void *user, const char *line);
+static void app_control_reply(const app_control_io_t *io, const char *line);
+static void app_control_replyf(const app_control_io_t *io, const char *fmt, ...);
+
 static uint16_t app_crc16_ccitt(const uint8_t *data, size_t len)
 {
     uint16_t crc = 0xFFFF;
@@ -81,6 +119,7 @@ static uint16_t app_crc16_ccitt(const uint8_t *data, size_t len)
     return crc;
 }
 
+#if defined(CONFIG_NRF24_ROLE_RX)
 static void app_bytes_to_hex(const uint8_t *data, size_t len, char *out, size_t out_size)
 {
     if (out == NULL || out_size == 0) {
@@ -105,6 +144,7 @@ static void app_bytes_to_hex(const uint8_t *data, size_t len, char *out, size_t 
     }
     out[len * 2] = '\0';
 }
+#endif
 
 static size_t app_proto_build_frame(uint8_t *out, size_t out_size, const app_proto_frame_t *in)
 {
@@ -603,12 +643,54 @@ static bool app_parse_u32_token(char **p, uint32_t *out)
     return true;
 }
 
-static void app_uart_reply(const char *msg)
+static void app_control_send_uart(void *user, const char *line)
 {
-    if (msg == NULL) {
+    (void)user;
+    if (line == NULL) {
         return;
     }
-    printf("%s\n", msg);
+    printf("%s\n", line);
+}
+
+static void app_control_send_socket(void *user, const char *line)
+{
+    if (user == NULL || line == NULL) {
+        return;
+    }
+
+    int sock = (int)(intptr_t)user;
+    if (sock < 0) {
+        return;
+    }
+
+    size_t len = strlen(line);
+    if (len > 0) {
+        (void)write(sock, line, len);
+    }
+    (void)write(sock, "\n", 1);
+}
+
+static void app_control_reply(const app_control_io_t *io, const char *line)
+{
+    if (io == NULL || io->send_line == NULL || line == NULL) {
+        return;
+    }
+
+    io->send_line(io->user, line);
+}
+
+static void app_control_replyf(const app_control_io_t *io, const char *fmt, ...)
+{
+    if (io == NULL || io->send_line == NULL || fmt == NULL) {
+        return;
+    }
+
+    char line[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    app_control_reply(io, line);
 }
 
 static void app_reset_stats(void)
@@ -617,33 +699,33 @@ static void app_reset_stats(void)
     memset(&s_rx_stats, 0, sizeof(s_rx_stats));
 }
 
-static void app_reply_stats(void)
+static void app_reply_stats(const app_control_io_t *io)
 {
 #if defined(CONFIG_NRF24_ROLE_TX)
-    printf("STAT role=TX enabled=%d queued=%lu sent=%lu ack_ok=%lu ack_fail=%lu retries_sum=%lu retries_max=%lu next_seq=%u\n",
-           s_tx_enabled ? 1 : 0,
-           (unsigned long)s_tx_stats.burst_queued,
-           (unsigned long)s_tx_stats.frame_sent,
-           (unsigned long)s_tx_stats.tx_ok,
-           (unsigned long)s_tx_stats.tx_fail,
-           (unsigned long)s_tx_stats.retries_sum,
-           (unsigned long)s_tx_stats.retries_max,
-           (unsigned)s_tx_stats.next_seq);
+    app_control_replyf(io, "STAT role=TX enabled=%d queued=%lu sent=%lu ack_ok=%lu ack_fail=%lu retries_sum=%lu retries_max=%lu next_seq=%u",
+                       s_tx_enabled ? 1 : 0,
+                       (unsigned long)s_tx_stats.burst_queued,
+                       (unsigned long)s_tx_stats.frame_sent,
+                       (unsigned long)s_tx_stats.tx_ok,
+                       (unsigned long)s_tx_stats.tx_fail,
+                       (unsigned long)s_tx_stats.retries_sum,
+                       (unsigned long)s_tx_stats.retries_max,
+                       (unsigned)s_tx_stats.next_seq);
 #else
-    printf("STAT role=RX rx_pkt=%lu frame_ok=%lu crc_fail=%lu magic_fail=%lu len_fail=%lu dup=%lu ooo=%lu gap=%lu last_seq=%u\n",
-           (unsigned long)s_rx_stats.rx_packets,
-           (unsigned long)s_rx_stats.frame_ok,
-           (unsigned long)s_rx_stats.crc_fail,
-           (unsigned long)s_rx_stats.magic_fail,
-           (unsigned long)s_rx_stats.len_fail,
-           (unsigned long)s_rx_stats.seq_dup,
-           (unsigned long)s_rx_stats.seq_out_of_order,
-           (unsigned long)s_rx_stats.seq_gap,
-           (unsigned)s_rx_stats.last_seq);
+    app_control_replyf(io, "STAT role=RX rx_pkt=%lu frame_ok=%lu crc_fail=%lu magic_fail=%lu len_fail=%lu dup=%lu ooo=%lu gap=%lu last_seq=%u",
+                       (unsigned long)s_rx_stats.rx_packets,
+                       (unsigned long)s_rx_stats.frame_ok,
+                       (unsigned long)s_rx_stats.crc_fail,
+                       (unsigned long)s_rx_stats.magic_fail,
+                       (unsigned long)s_rx_stats.len_fail,
+                       (unsigned long)s_rx_stats.seq_dup,
+                       (unsigned long)s_rx_stats.seq_out_of_order,
+                       (unsigned long)s_rx_stats.seq_gap,
+                       (unsigned)s_rx_stats.last_seq);
 #endif
 }
 
-static void app_handle_uart_line(char *line)
+static void app_handle_control_line(const app_control_io_t *io, char *line)
 {
     app_trim_right(line);
     char *cmd = app_trim_left(line);
@@ -652,21 +734,21 @@ static void app_handle_uart_line(char *line)
     }
 
     if (strcmp(cmd, "STATUS") == 0) {
-        app_reply_stats();
+        app_reply_stats(io);
         return;
     }
 
     if (strcmp(cmd, "RESETSTATS") == 0) {
         app_reset_stats();
-        app_uart_reply("OK RESET");
+        app_control_reply(io, "OK RESET");
         return;
     }
 
     if (strcmp(cmd, "HELP") == 0) {
 #if defined(CONFIG_NRF24_ROLE_TX)
-        app_uart_reply("CMD: ENABLE <0|1>, BURST <count> <interval_ms> <ascii>, BURSTHEX <count> <interval_ms> <hex>, STOP, STATUS, RESETSTATS");
+        app_control_reply(io, "CMD: ENABLE <0|1>, BURST <count> <interval_ms> <ascii>, BURSTHEX <count> <interval_ms> <hex>, STOP, STATUS, RESETSTATS");
 #else
-        app_uart_reply("CMD: STATUS, RESETSTATS");
+        app_control_reply(io, "CMD: STATUS, RESETSTATS");
 #endif
         return;
     }
@@ -676,20 +758,20 @@ static void app_handle_uart_line(char *line)
         char *p = cmd + 6;
         uint32_t enabled = 0;
         if (!app_parse_u32_token(&p, &enabled) || (enabled > 1)) {
-            app_uart_reply("ERR usage: ENABLE <0|1>");
+            app_control_reply(io, "ERR usage: ENABLE <0|1>");
             return;
         }
         s_tx_enabled = (enabled == 1);
         if (!s_tx_enabled) {
             s_tx_abort = true;
         }
-        app_uart_reply(s_tx_enabled ? "OK ENABLED" : "OK DISABLED");
+        app_control_reply(io, s_tx_enabled ? "OK ENABLED" : "OK DISABLED");
         return;
     }
 
     if (strcmp(cmd, "STOP") == 0) {
         s_tx_abort = true;
-        app_uart_reply("OK STOPPED");
+        app_control_reply(io, "OK STOPPED");
         return;
     }
 
@@ -700,24 +782,24 @@ static void app_handle_uart_line(char *line)
     } else if (strncmp(cmd, "BURST", 5) == 0) {
         cmd += 5;
     } else {
-        app_uart_reply("ERR unknown command");
+        app_control_reply(io, "ERR unknown command");
         return;
     }
 
     uint32_t count = 0;
     uint32_t interval_ms = 0;
     if (!app_parse_u32_token(&cmd, &count) || count == 0) {
-        app_uart_reply("ERR invalid count");
+        app_control_reply(io, "ERR invalid count");
         return;
     }
     if (!app_parse_u32_token(&cmd, &interval_ms)) {
-        app_uart_reply("ERR invalid interval_ms");
+        app_control_reply(io, "ERR invalid interval_ms");
         return;
     }
 
     char *payload = app_trim_left(cmd);
     if (*payload == '\0') {
-        app_uart_reply("ERR empty payload");
+        app_control_reply(io, "ERR empty payload");
         return;
     }
 
@@ -727,7 +809,7 @@ static void app_handle_uart_line(char *line)
 
     if (is_hex) {
         if (!app_parse_hex_payload(payload, req.data, &req.len)) {
-            app_uart_reply("ERR invalid hex payload");
+            app_control_reply(io, "ERR invalid hex payload");
             return;
         }
     } else {
@@ -737,33 +819,243 @@ static void app_handle_uart_line(char *line)
     }
 
     if (xQueueSend(s_tx_cmd_queue, &req, pdMS_TO_TICKS(30)) != pdTRUE) {
-        app_uart_reply("ERR queue full");
+        app_control_reply(io, "ERR queue full");
         return;
     }
 
     s_tx_stats.burst_queued++;
 
-    app_uart_reply("OK queued");
+    app_control_reply(io, "OK queued");
 #else
-    app_uart_reply("ERR RX role: only STATUS/RESETSTATS supported");
+    app_control_reply(io, "ERR RX role: only STATUS/RESETSTATS supported");
 #endif
 }
 
 static void app_uart_cmd_task(void *arg)
 {
     (void)arg;
+    const app_control_io_t io = {
+        .send_line = app_control_send_uart,
+        .user = NULL,
+    };
 
     char line[192] = {0};
-    app_uart_reply("READY type HELP for commands");
+    app_control_reply(&io, "READY type HELP for commands");
 
     while (1) {
         if (fgets(line, sizeof(line), stdin) == NULL) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
-        app_handle_uart_line(line);
+        app_handle_control_line(&io, line);
     }
 }
+
+static bool app_socket_read_line(int sock, char *buf, size_t buf_size)
+{
+    if (buf == NULL || buf_size < 2) {
+        return false;
+    }
+
+    size_t used = 0;
+    while (used + 1 < buf_size) {
+        char ch = 0;
+        int ret = (int)read(sock, &ch, 1);
+        if (ret == 0) {
+            return false;
+        }
+        if (ret < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
+            }
+            return false;
+        }
+
+        if (ch == '\r') {
+            continue;
+        }
+        if (ch == '\n') {
+            buf[used] = '\0';
+            return true;
+        }
+
+        buf[used++] = ch;
+    }
+
+    buf[used] = '\0';
+    return true;
+}
+
+#if CONFIG_NRF24_CONTROL_WIFI_ENABLE
+static esp_netif_t *s_wifi_ap_netif;
+
+static void app_build_wifi_ssid(char *ssid, size_t ssid_size)
+{
+    if (ssid == NULL || ssid_size == 0) {
+        return;
+    }
+
+#if defined(CONFIG_NRF24_ROLE_TX)
+    snprintf(ssid, ssid_size, "%s_%d", CONFIG_NRF24_CONTROL_WIFI_TX_PREFIX, CONFIG_NRF24_CONTROL_WIFI_TX_ID);
+#else
+    snprintf(ssid, ssid_size, "%s", "NRF24_RX");
+#endif
+}
+
+static void app_wifi_control_start(void)
+{
+    static bool s_wifi_ready = false;
+    if (s_wifi_ready) {
+        return;
+    }
+
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    s_wifi_ap_netif = esp_netif_create_default_wifi_ap();
+    ESP_ERROR_CHECK(s_wifi_ap_netif != NULL ? ESP_OK : ESP_ERR_NO_MEM);
+
+    wifi_init_config_t wifi_init_cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&wifi_init_cfg));
+
+    wifi_config_t ap_config = {0};
+    const char *password = CONFIG_NRF24_CONTROL_WIFI_PASSWORD;
+    char ssid[sizeof(ap_config.ap.ssid)] = {0};
+    app_build_wifi_ssid(ssid, sizeof(ssid));
+    size_t ssid_len = strlen(ssid);
+    size_t pass_len = strlen(password);
+
+    if (ssid_len > sizeof(ap_config.ap.ssid)) {
+        ssid_len = sizeof(ap_config.ap.ssid);
+    }
+    memcpy(ap_config.ap.ssid, ssid, ssid_len);
+    ap_config.ap.ssid_len = (uint8_t)ssid_len;
+
+    if (pass_len > sizeof(ap_config.ap.password) - 1) {
+        pass_len = sizeof(ap_config.ap.password) - 1;
+    }
+    memcpy(ap_config.ap.password, password, pass_len);
+    ap_config.ap.password[pass_len] = '\0';
+
+    ap_config.ap.channel = 1;
+    ap_config.ap.max_connection = APP_WIFI_CONTROL_MAX_CLIENTS;
+    ap_config.ap.beacon_interval = 100;
+    ap_config.ap.authmode = pass_len >= 8 ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    ap_config.ap.pmf_cfg.required = false;
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI(TAG, "Wi-Fi AP started: SSID=%s password=%s TCP=%d token=%s",
+             ssid,
+             CONFIG_NRF24_CONTROL_WIFI_PASSWORD,
+             CONFIG_NRF24_CONTROL_TCP_PORT,
+             CONFIG_NRF24_CONTROL_TOKEN);
+
+    s_wifi_ready = true;
+}
+
+static void app_tcp_control_task(void *arg)
+{
+    (void)arg;
+    const int listen_port = CONFIG_NRF24_CONTROL_TCP_PORT;
+    const char *token = CONFIG_NRF24_CONTROL_TOKEN;
+
+    int listen_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+    if (listen_fd < 0) {
+        ESP_LOGE(TAG, "TCP socket create failed");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    int reuse = 1;
+    (void)setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    struct sockaddr_in addr = {0};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)listen_port);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        ESP_LOGE(TAG, "TCP bind failed port=%d", listen_port);
+        close(listen_fd);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    if (listen(listen_fd, 1) != 0) {
+        ESP_LOGE(TAG, "TCP listen failed");
+        close(listen_fd);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ESP_LOGI(TAG, "TCP control server listening on %d", listen_port);
+
+    while (1) {
+        struct sockaddr_in client_addr = {0};
+        socklen_t client_len = sizeof(client_addr);
+        int client_fd = accept(listen_fd, (struct sockaddr *)&client_addr, &client_len);
+        if (client_fd < 0) {
+            continue;
+        }
+
+        struct timeval timeout = {
+            .tv_sec = 1,
+            .tv_usec = 0,
+        };
+        (void)setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+        const app_control_io_t io = {
+            .send_line = app_control_send_socket,
+            .user = (void *)(intptr_t)client_fd,
+        };
+
+        app_control_reply(&io, "READY NRF24 TCP CONTROL");
+        app_control_reply(&io, "AUTH required");
+
+        bool authed = false;
+        char line[APP_CONTROL_LINE_MAX] = {0};
+
+        while (app_socket_read_line(client_fd, line, sizeof(line))) {
+            char *cmd = app_trim_left(line);
+            app_trim_right(cmd);
+            if (*cmd == '\0') {
+                continue;
+            }
+
+            if (!authed) {
+                if (strncmp(cmd, "AUTH ", 5) == 0 && strcmp(cmd + 5, token) == 0) {
+                    authed = true;
+                    app_control_reply(&io, "OK AUTH");
+                    app_control_reply(&io, "READY type HELP for commands");
+                } else {
+                    app_control_reply(&io, "ERR auth");
+                    break;
+                }
+                continue;
+            }
+
+            app_handle_control_line(&io, cmd);
+        }
+
+        shutdown(client_fd, SHUT_RDWR);
+        close(client_fd);
+        ESP_LOGI(TAG, "TCP client disconnected");
+    }
+}
+#endif
 
 #if defined(CONFIG_NRF24_ROLE_TX)
 static void app_tx_task(void *arg)
@@ -936,6 +1228,14 @@ static void app_start_uart_console(void)
     xTaskCreate(app_uart_cmd_task, "uart_cmd", 4096, NULL, 9, NULL);
 }
 
+static void app_start_control_wifi(void)
+{
+#if CONFIG_NRF24_CONTROL_WIFI_ENABLE
+    app_wifi_control_start();
+    xTaskCreate(app_tcp_control_task, "tcp_ctrl", 4096, NULL, 8, NULL);
+#endif
+}
+
 void app_main(void)
 {
     /*
@@ -979,6 +1279,7 @@ void app_main(void)
     ESP_ERROR_CHECK(nrf24_config_retransmit(CONFIG_NRF24_AUTO_RETR_DELAY_US, CONFIG_NRF24_AUTO_RETR_COUNT));
 
     app_start_uart_console();
+    app_start_control_wifi();
     app_start_rx_mode();
     app_start_tx_mode();
 

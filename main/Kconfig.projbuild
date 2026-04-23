@@ -159,4 +159,49 @@ menu "NRF24 Configuration"
         default y if NRF24_MODE_TUTORIAL_DEBUG
         default n if NRF24_MODE_RELEASE_LITE
 
+    config NRF24_CONTROL_WIFI_ENABLE
+        bool "Enable wireless control service"
+        default y
+        help
+            Start a SoftAP and TCP command service for wireless upper computer control.
+
+    config NRF24_CONTROL_WIFI_RX_SSID
+        string "RX wireless control AP SSID"
+        default "NRF24_RX"
+        depends on NRF24_CONTROL_WIFI_ENABLE && NRF24_ROLE_RX
+
+    config NRF24_CONTROL_WIFI_TX_PREFIX
+        string "TX wireless control AP prefix"
+        default "NRF24_TX"
+        depends on NRF24_CONTROL_WIFI_ENABLE && NRF24_ROLE_TX
+
+    config NRF24_CONTROL_WIFI_TX_ID
+        int "TX wireless control AP index"
+        range 1 99
+        default 1
+        depends on NRF24_CONTROL_WIFI_ENABLE && NRF24_ROLE_TX
+
+    config NRF24_CONTROL_WIFI_SSID
+        string "Wireless control AP SSID"
+        default "NRF24_CTRL"
+        depends on NRF24_CONTROL_WIFI_ENABLE
+
+    config NRF24_CONTROL_WIFI_PASSWORD
+        string "Wireless control AP password"
+        default "nrf24ctrl"
+        depends on NRF24_CONTROL_WIFI_ENABLE
+        help
+            Must be at least 8 characters for WPA2.
+
+    config NRF24_CONTROL_TCP_PORT
+        int "Wireless control TCP port"
+        range 1 65535
+        default 3333
+        depends on NRF24_CONTROL_WIFI_ENABLE
+
+    config NRF24_CONTROL_TOKEN
+        string "Wireless control token"
+        default "nrf24"
+        depends on NRF24_CONTROL_WIFI_ENABLE
+
 endmenu

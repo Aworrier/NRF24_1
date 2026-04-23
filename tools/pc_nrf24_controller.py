@@ -1,4 +1,8 @@
 import threading
+import socket
+import json
+import argparse
+from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
 from datetime import datetime, timedelta
@@ -8,17 +12,25 @@ from serial.tools import list_ports
 
 
 class Nrf24ControllerApp:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, initial_config: dict | None = None) -> None:
         self.root = root
         self.root.title("NRF24 上位机控制台")
         self.root.geometry("860x620")
 
+        self.config_path = Path.home() / ".nrf24_controller_gui.json"
+
         self.ser = None
+        self.sock = None
+        self.conn_type = None
         self.reader_stop = threading.Event()
         self.reader_thread = None
 
+        self.conn_mode_var = tk.StringVar(value="SERIAL")
         self.port_var = tk.StringVar()
         self.baud_var = tk.StringVar(value="115200")
+        self.host_var = tk.StringVar(value="192.168.4.1")
+        self.tcp_port_var = tk.StringVar(value="3333")
+        self.token_var = tk.StringVar(value="nrf24")
         self.enable_var = tk.BooleanVar(value=True)
 
         self.count_var = tk.StringVar(value="10")
@@ -29,6 +41,10 @@ class Nrf24ControllerApp:
         self.poll_interval_ms = 1000
         self.schedule_time_var = tk.StringVar(value="11:05:00")
         self.scheduled_send_job = None
+
+        self._load_persisted_config()
+        if initial_config:
+            self._apply_initial_config(initial_config)
 
         self.stat_vars = {
             "role": tk.StringVar(value="-"),
@@ -48,6 +64,59 @@ class Nrf24ControllerApp:
         self._build_ui()
         self._refresh_ports()
 
+    def _apply_initial_config(self, config: dict) -> None:
+        for key, var in (
+            ("conn_mode", self.conn_mode_var),
+            ("port", self.port_var),
+            ("baud", self.baud_var),
+            ("host", self.host_var),
+            ("tcp_port", self.tcp_port_var),
+            ("token", self.token_var),
+            ("count", self.count_var),
+            ("interval", self.interval_var),
+            ("mode", self.mode_var),
+            ("payload", self.payload_var),
+            ("schedule_time", self.schedule_time_var),
+        ):
+            value = config.get(key)
+            if value is not None:
+                var.set(str(value))
+
+        if "auto_poll" in config:
+            self.auto_poll_var.set(bool(config["auto_poll"]))
+        if "enable_tx" in config:
+            self.enable_var.set(bool(config["enable_tx"]))
+
+    def _load_persisted_config(self) -> None:
+        try:
+            if self.config_path.exists():
+                data = json.loads(self.config_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    self._apply_initial_config(data)
+        except Exception:
+            pass
+
+    def _save_persisted_config(self) -> None:
+        data = {
+            "conn_mode": self.conn_mode_var.get(),
+            "port": self.port_var.get(),
+            "baud": self.baud_var.get(),
+            "host": self.host_var.get(),
+            "tcp_port": self.tcp_port_var.get(),
+            "token": self.token_var.get(),
+            "count": self.count_var.get(),
+            "interval": self.interval_var.get(),
+            "mode": self.mode_var.get(),
+            "payload": self.payload_var.get(),
+            "schedule_time": self.schedule_time_var.get(),
+            "auto_poll": self.auto_poll_var.get(),
+            "enable_tx": self.enable_var.get(),
+        }
+        try:
+            self.config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
     def _build_ui(self) -> None:
         top = tk.Frame(self.root)
         top.pack(fill=tk.X, padx=10, pady=8)
@@ -61,6 +130,18 @@ class Nrf24ControllerApp:
 
         tk.Label(top, text="波特率").grid(row=0, column=3, sticky="w")
         tk.Entry(top, textvariable=self.baud_var, width=10).grid(row=0, column=4, padx=6)
+
+        tk.Label(top, text="方式").grid(row=1, column=0, sticky="w")
+        tk.OptionMenu(top, self.conn_mode_var, "SERIAL", "TCP").grid(row=1, column=1, padx=6, sticky="w")
+
+        tk.Label(top, text="主机").grid(row=1, column=2, sticky="w")
+        tk.Entry(top, textvariable=self.host_var, width=12).grid(row=1, column=3, padx=6)
+
+        tk.Label(top, text="端口").grid(row=1, column=4, sticky="w")
+        tk.Entry(top, textvariable=self.tcp_port_var, width=10).grid(row=1, column=5, padx=6)
+
+        tk.Label(top, text="Token").grid(row=1, column=6, sticky="w")
+        tk.Entry(top, textvariable=self.token_var, width=12).grid(row=1, column=7, padx=6)
 
         tk.Button(top, text="连接", command=self._connect, width=12).grid(row=0, column=5, padx=6)
         tk.Button(top, text="断开", command=self._disconnect, width=12).grid(row=0, column=6, padx=6)
@@ -164,19 +245,51 @@ class Nrf24ControllerApp:
         self.log.insert(tk.END, message + "\n")
         self.log.see(tk.END)
 
+    def _close_transport(self) -> None:
+        if self.conn_type == "SERIAL" and self.ser is not None:
+            try:
+                self.ser.close()
+            except Exception:
+                pass
+        if self.conn_type == "TCP" and self.sock is not None:
+            try:
+                self.sock.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+        self.ser = None
+        self.sock = None
+        self.conn_type = None
+
     def _send_line(self, line: str) -> None:
-        if self.ser is None:
-            messagebox.showerror("错误", "串口未连接")
+        if self.conn_type is None:
+            messagebox.showerror("错误", "连接未建立")
             return
 
-        self.ser.write((line + "\n").encode("utf-8"))
+        if self.conn_type == "SERIAL" and self.ser is not None:
+            self.ser.write((line + "\n").encode("utf-8"))
+        elif self.conn_type == "TCP" and self.sock is not None:
+            self.sock.sendall((line + "\n").encode("utf-8"))
+        else:
+            messagebox.showerror("错误", "连接状态无效")
+            return
         self._log("=> " + line)
 
     def _connect(self) -> None:
-        if self.ser is not None:
+        if self.conn_type is not None:
             self._log("已连接，无需重复连接")
             return
 
+        mode = self.conn_mode_var.get().strip().upper()
+        if mode == "TCP":
+            self._connect_tcp()
+        else:
+            self._connect_serial()
+
+    def _connect_serial(self) -> None:
         port = self.port_var.get().strip()
         if not port:
             messagebox.showerror("错误", "请选择串口号")
@@ -194,34 +307,70 @@ class Nrf24ControllerApp:
             messagebox.showerror("连接失败", str(exc))
             return
 
+        self.conn_type = "SERIAL"
         self.reader_stop.clear()
         self.reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self.reader_thread.start()
-        self._log(f"连接成功: {port} @ {baud}")
+        self._log(f"串口连接成功: {port} @ {baud}")
         self.root.after(200, self._query_status)
         self.root.after(self.poll_interval_ms, self._poll_status_tick)
 
+    def _connect_tcp(self) -> None:
+        host = self.host_var.get().strip()
+        if not host:
+            messagebox.showerror("错误", "请输入主机地址")
+            return
+
+        try:
+            port = int(self.tcp_port_var.get().strip())
+        except ValueError:
+            messagebox.showerror("错误", "TCP 端口格式无效")
+            return
+
+        try:
+            self.sock = socket.create_connection((host, port), timeout=5)
+            self.sock.settimeout(0.2)
+        except Exception as exc:
+            messagebox.showerror("连接失败", str(exc))
+            self.sock = None
+            return
+
+        self.conn_type = "TCP"
+        self.reader_stop.clear()
+        self.reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self.reader_thread.start()
+
+        token = self.token_var.get().strip()
+        self._log(f"无线连接成功: {host}:{port}")
+        self._send_line(f"AUTH {token}")
+        self.root.after(300, self._query_status)
+        self.root.after(self.poll_interval_ms, self._poll_status_tick)
+
     def _disconnect(self) -> None:
-        if self.ser is None:
+        if self.conn_type is None:
             return
 
         self.reader_stop.set()
-        try:
-            self.ser.close()
-        except Exception:
-            pass
-        self.ser = None
-        self._log("串口已断开")
+        self._close_transport()
+        self._save_persisted_config()
+        self._log("连接已断开")
 
     def _reader_loop(self) -> None:
         while not self.reader_stop.is_set():
             try:
-                if self.ser is None:
+                if self.conn_type == "SERIAL":
+                    if self.ser is None:
+                        break
+                    data = self.ser.readline()
+                elif self.conn_type == "TCP":
+                    if self.sock is None:
+                        break
+                    data = self._socket_read_line()
+                else:
                     break
-                data = self.ser.readline()
                 if not data:
                     continue
-                text = data.decode("utf-8", errors="replace").strip()
+                text = data.decode("utf-8", errors="replace").strip() if isinstance(data, bytes) else str(data).strip()
                 if text:
                     self.root.after(0, self._log, "<= " + text)
                     stat_line = self._extract_stat_line(text)
@@ -230,6 +379,33 @@ class Nrf24ControllerApp:
             except Exception as exc:
                 self.root.after(0, self._log, f"Reader error: {exc}")
                 break
+
+    def _socket_read_line(self):
+        if self.sock is None:
+            return b""
+
+        chunks = []
+        while not self.reader_stop.is_set():
+            try:
+                data = self.sock.recv(1)
+            except socket.timeout:
+                if chunks:
+                    continue
+                return b""
+            except Exception:
+                return b""
+
+            if not data:
+                return b""
+
+            ch = data.decode("utf-8", errors="ignore")
+            if ch == "\r":
+                continue
+            if ch == "\n":
+                return "".join(chunks).encode("utf-8")
+            chunks.append(ch)
+
+        return b""
 
     def _extract_stat_line(self, text: str):
         idx = text.find("STAT ")
@@ -310,7 +486,7 @@ class Nrf24ControllerApp:
         self._send_line("STATUS")
 
     def _poll_status_tick(self) -> None:
-        if self.ser is not None and self.auto_poll_var.get():
+        if self.conn_type is not None and self.auto_poll_var.get():
             self._query_status()
         self.root.after(self.poll_interval_ms, self._poll_status_tick)
 
@@ -338,8 +514,8 @@ class Nrf24ControllerApp:
             messagebox.showerror("错误", "时间格式无效，请输入 HH:MM 或 HH:MM:SS")
             return
 
-        if self.ser is None:
-            messagebox.showerror("错误", "请先连接串口后再定时")
+        if self.conn_type is None:
+            messagebox.showerror("错误", "请先建立连接后再定时")
             return
 
         self._cancel_scheduled_burst(log_cancel=False)
@@ -371,13 +547,17 @@ class Nrf24ControllerApp:
     def _show_help(self) -> None:
         text = (
             "功能说明\n"
-            "1. 连接: 选择串口和波特率后连接设备。\n"
+            "1. 连接: 可选择串口或无线 TCP 连接设备。\n"
             "2. 启用发送: 控制 TX 端是否允许发包。\n"
             "3. 发送突发包: 按设置连续发送 count 个包，间隔 interval(ms)。\n"
             "4. 停止发送: 中止当前突发发送任务。\n"
             "5. 查询状态: 主动发送 STATUS，刷新 ACK/RX 统计。\n"
             "6. 重置统计: 发送 RESETSTATS，清零统计计数。\n"
             "7. 自动轮询: 每秒自动查询 STATUS，不会自动发送业务载荷。\n\n"
+            "无线连接\n"
+            "- 设备会开启 SoftAP，默认 SSID 为 NRF24_CTRL。\n"
+            "- 无线模式下先自动发送 AUTH token，再执行命令。\n"
+            "- 默认主机地址是 192.168.4.1，端口是 3333。\n\n"
             "定时发送\n"
             "- 在“开始时间”输入 HH:MM 或 HH:MM:SS，例如 11:05 或 11:05:00。\n"
             "- 点击“定时发送突发包”后，到点会自动执行一次“发送突发包”。\n"
@@ -393,11 +573,35 @@ class Nrf24ControllerApp:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="NRF24 upper computer controller")
+    parser.add_argument("--mode", choices=["SERIAL", "TCP"], help="default connection mode")
+    parser.add_argument("--host", help="TCP host")
+    parser.add_argument("--port", help="TCP port")
+    parser.add_argument("--token", help="TCP auth token")
+    parser.add_argument("--baud", help="serial baud rate")
+    parser.add_argument("--schedule", help="default schedule time, HH:MM or HH:MM:SS")
+    parser.add_argument("--payload", help="default payload")
+    args = parser.parse_args()
+
+    initial_config = {}
+    for key, value in (
+        ("conn_mode", args.mode),
+        ("host", args.host),
+        ("tcp_port", args.port),
+        ("token", args.token),
+        ("baud", args.baud),
+        ("schedule_time", args.schedule),
+        ("payload", args.payload),
+    ):
+        if value is not None:
+            initial_config[key] = value
+
     root = tk.Tk()
-    app = Nrf24ControllerApp(root)
+    app = Nrf24ControllerApp(root, initial_config=initial_config)
 
     def on_close() -> None:
         app._cancel_scheduled_burst(log_cancel=False)
+        app._save_persisted_config()
         app._disconnect()
         root.destroy()
 
