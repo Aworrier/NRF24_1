@@ -159,6 +159,7 @@ menu "NRF24 Configuration"
         default y if NRF24_MODE_TUTORIAL_DEBUG
         default n if NRF24_MODE_RELEASE_LITE
 
+<<<<<<< HEAD
     config NRF24_CONTROL_WIFI_ENABLE
         bool "Enable wireless control service"
         default y
@@ -204,4 +205,6 @@ menu "NRF24 Configuration"
         default "nrf24"
         depends on NRF24_CONTROL_WIFI_ENABLE
 
+=======
+>>>>>>> parent of 60d7e4e (检查1_版本)
 endmenu
