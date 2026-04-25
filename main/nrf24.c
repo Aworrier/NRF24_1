@@ -11,6 +11,11 @@
 /*
  * nrf24.c
  *
+ * 分层视角（便于把代码和无线协议栈对齐）：
+ * - 应用层（app_main.c）：决定何时发、发什么、如何统计。
+ * - 本文件上半部分：SPI 访问原语 + 寄存器读写（可视为 PHY 控制面）。
+ * - 本文件下半部分：收发流程、ACK/重发、IRQ/FIFO（可视为简化 MAC 数据面）。
+ *
  * 教学导向阅读建议：
  * 1) 先看命令/寄存器宏，建立芯片操作地图。
  * 2) 再看 nrf24_spi_transfer / read/write_register，理解最小 SPI 事务。
@@ -31,7 +36,10 @@
 #define NRF24_CMD_W_TX_PAYLOAD_NOACK 0xB0
 #define NRF24_CMD_NOP               0xFF
 
-/* 常用寄存器地址定义。 */
+/* 常用寄存器地址定义。
+ * 备注：RPD 可用于“是否检测到较强信号”的粗略判断（非完整 CSMA/CCA）。
+ * 本驱动目前没有在发送前读取 RPD，因此发送路径不是 LBT/CSMA 流程。
+ */
 #define NRF24_REG_CONFIG            0x00
 #define NRF24_REG_EN_AA             0x01
 #define NRF24_REG_EN_RXADDR         0x02
@@ -106,7 +114,10 @@ typedef struct {
 
 static nrf24_ctx_t s_nrf24 = {0};
 
-/* CE 是 RF 发送/接收使能脚。这里统一封装，避免应用层直接操作。 */
+/* CE 是 RF 发送/接收使能脚。
+ * - RX 模式：CE=1 持续监听。
+ * - TX 模式：CE 给一个短脉冲触发一次发射。
+ */
 static inline void nrf24_set_ce(int level)
 {
     gpio_set_level(s_nrf24.cfg.pin_ce, level);
@@ -205,6 +216,7 @@ static esp_err_t nrf24_write_payload(const uint8_t *data, size_t len, bool no_ac
     uint8_t tx[33] = {0};
     uint8_t rx[33] = {0};
 
+    /* no_ack=true 时走 W_TX_PAYLOAD_NOACK，可用于单向链路排障。 */
     tx[0] = no_ack ? NRF24_CMD_W_TX_PAYLOAD_NOACK : NRF24_CMD_W_TX_PAYLOAD;
     memcpy(&tx[1], data, len);
 
@@ -255,6 +267,7 @@ static esp_err_t nrf24_config_radio(void)
 {
     uint8_t reg = 0;
 
+    /* PHY: 固定在单一信道工作；双端必须一致。 */
     ESP_RETURN_ON_ERROR(nrf24_write_register(NRF24_REG_RF_CH, s_nrf24.cfg.channel, NULL), TAG, "set channel failed");
 
     reg = 0;
@@ -285,16 +298,21 @@ static esp_err_t nrf24_config_radio(void)
             break;
     }
 
+    /* PHY: 速率 + 发射功率。 */
     ESP_RETURN_ON_ERROR(nrf24_write_register(NRF24_REG_RF_SETUP, reg, NULL), TAG, "set rf setup failed");
 
+    /* 地址宽度编码：3/4/5 字节映射到 1/2/3。 */
     uint8_t setup_aw = (uint8_t)(s_nrf24.cfg.address_width - 2U);
     ESP_RETURN_ON_ERROR(nrf24_write_register(NRF24_REG_SETUP_AW, setup_aw, NULL), TAG, "set addr width failed");
 
+    /* MAC: 自动重发策略（延迟 + 次数）。 */
     ESP_RETURN_ON_ERROR(nrf24_config_retransmit((uint16_t)s_nrf24.cfg.retr_delay_us * 250U, s_nrf24.cfg.retr_count), TAG, "set retransmit failed");
 
+    /* MAC: 默认对全部 pipe 开启 auto-ack。 */
     ESP_RETURN_ON_ERROR(nrf24_write_register(NRF24_REG_EN_AA, 0x3F, NULL), TAG, "enable auto ack failed");
 
     if (s_nrf24.cfg.enable_dyn_payload) {
+        /* FEATURE.EN_DPL + DYNPD：动态载荷。 */
         ESP_RETURN_ON_ERROR(nrf24_write_register(NRF24_REG_FEATURE, 0x04, NULL), TAG, "set feature failed");
         ESP_RETURN_ON_ERROR(nrf24_write_register(NRF24_REG_DYNPD, 0x3F, NULL), TAG, "set dynpd failed");
     } else {
@@ -302,6 +320,7 @@ static esp_err_t nrf24_config_radio(void)
         ESP_RETURN_ON_ERROR(nrf24_write_register(NRF24_REG_DYNPD, 0x00, NULL), TAG, "clear dynpd failed");
     }
 
+    /* 静态载荷模式下，每个 pipe 都写固定 payload 宽度。 */
     for (uint8_t pipe = 0; pipe < 6; ++pipe) {
         ESP_RETURN_ON_ERROR(nrf24_set_payload_width(pipe, s_nrf24.cfg.payload_size), TAG, "set payload width failed");
     }
@@ -487,6 +506,8 @@ esp_err_t nrf24_config_retransmit(uint16_t delay_us, uint8_t count)
 esp_err_t nrf24_start_listening(void)
 {
     uint8_t config = 0;
+
+    /* 进入 PRX：PRIM_RX=1 + PWR_UP=1，然后拉高 CE 持续监听。 */
     ESP_RETURN_ON_ERROR(nrf24_read_register(NRF24_REG_CONFIG, &config, NULL), TAG, "read config failed");
     config |= NRF24_CONFIG_PRIM_RX | NRF24_CONFIG_PWR_UP;
     ESP_RETURN_ON_ERROR(nrf24_write_register(NRF24_REG_CONFIG, config, NULL), TAG, "write config failed");
@@ -500,6 +521,8 @@ esp_err_t nrf24_start_listening(void)
 esp_err_t nrf24_stop_listening(void)
 {
     uint8_t config = 0;
+
+    /* 退出 PRX：先 CE=0，再清 PRIM_RX，防止模式切换中误触发。 */
     nrf24_set_ce(0);
     ESP_RETURN_ON_ERROR(nrf24_read_register(NRF24_REG_CONFIG, &config, NULL), TAG, "read config failed");
     config &= (uint8_t)~NRF24_CONFIG_PRIM_RX;
@@ -518,6 +541,19 @@ esp_err_t nrf24_send_payload(const uint8_t *data, size_t len, TickType_t wait_ti
     ESP_RETURN_ON_FALSE(data != NULL, ESP_ERR_INVALID_ARG, TAG, "null payload");
 
     nrf24_irq_status_t irq = {0};
+    const TickType_t poll_interval = pdMS_TO_TICKS(2);
+
+    /* TX 状态机（简化 MAC）：
+     * 1) 切到 PTX（stop_listening）。
+     * 2) 清中断，写入 payload。
+     * 3) CE 脉冲触发一次空口发送。
+     * 4) 轮询 IRQ：TX_DS 成功，MAX_RT 失败。
+     *
+     * 新手测试改动点：
+     * - 想验证 ACK 依赖：可配合上层关闭 EN_AA，再看成功率变化。
+     * - 想加“发送前侦听”：可在第 2 步前插入 RPD 读取 + 随机退避。
+     * - 想调时序鲁棒性：可微调 CE 脉冲宽度或 poll_interval。
+     */
 
     ESP_RETURN_ON_ERROR(nrf24_stop_listening(), TAG, "stop listening failed");
     ESP_RETURN_ON_ERROR(nrf24_clear_irq_flags(), TAG, "clear irq failed");
@@ -539,7 +575,7 @@ esp_err_t nrf24_send_payload(const uint8_t *data, size_t len, TickType_t wait_ti
             ESP_RETURN_ON_ERROR(nrf24_flush_tx(), TAG, "flush tx failed");
             return ESP_ERR_TIMEOUT;
         }
-        vTaskDelay(pdMS_TO_TICKS(2));
+        vTaskDelay(poll_interval);
     }
 
     ESP_RETURN_ON_ERROR(nrf24_flush_tx(), TAG, "flush tx failed");
@@ -557,6 +593,7 @@ esp_err_t nrf24_read_rx_payload(nrf24_rx_payload_t *payload)
     uint8_t status = 0;
     uint8_t fifo = 0;
 
+    /* 先看 FIFO 是否为空，避免无效 SPI 读 payload。 */
     ESP_RETURN_ON_ERROR(nrf24_read_register(NRF24_REG_FIFO_STATUS, &fifo, &status), TAG, "read fifo failed");
     if (fifo & NRF24_FIFO_STATUS_RX_EMPTY) {
         return ESP_ERR_NOT_FOUND;
@@ -567,12 +604,14 @@ esp_err_t nrf24_read_rx_payload(nrf24_rx_payload_t *payload)
         return ESP_ERR_INVALID_STATE;
     }
 
+    /* 静态载荷：长度来自配置；动态载荷：长度来自 R_RX_PL_WID。 */
     uint8_t len = s_nrf24.cfg.payload_size;
     if (s_nrf24.cfg.enable_dyn_payload) {
         uint8_t tx[2] = {NRF24_CMD_R_RX_PL_WID, NRF24_CMD_NOP};
         uint8_t rx[2] = {0};
         ESP_RETURN_ON_ERROR(nrf24_spi_transfer(tx, rx, sizeof(tx)), TAG, "read dyn len failed");
         len = rx[1];
+        /* 芯片手册要求：动态长度异常时应 FLUSH_RX 以恢复 FIFO 状态。 */
         if (len == 0 || len > 32) {
             nrf24_flush_rx();
             return ESP_ERR_INVALID_SIZE;
@@ -582,6 +621,7 @@ esp_err_t nrf24_read_rx_payload(nrf24_rx_payload_t *payload)
     payload->pipe = pipe_no;
     payload->len = len;
     ESP_RETURN_ON_ERROR(nrf24_read_payload(payload->data, len, &status), TAG, "read payload failed");
+    /* 读取完成后清 IRQ，通知上层“该帧已处理”。 */
     ESP_RETURN_ON_ERROR(nrf24_clear_irq_flags(), TAG, "clear irq failed");
 
     return ESP_OK;
@@ -590,6 +630,7 @@ esp_err_t nrf24_read_rx_payload(nrf24_rx_payload_t *payload)
 /* 写 STATUS 清中断位。 */
 esp_err_t nrf24_clear_irq_flags(void)
 {
+    /* 写 1 清除 RX_DR/TX_DS/MAX_RT。 */
     return nrf24_write_register(NRF24_REG_STATUS, NRF24_STATUS_RX_DR | NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT, NULL);
 }
 
@@ -625,6 +666,11 @@ esp_err_t nrf24_flush_rx(void)
 esp_err_t nrf24_get_lost_and_retries(uint8_t *lost, uint8_t *retries)
 {
     uint8_t value = 0;
+
+    /* OBSERVE_TX:
+     * [7:4] PLOS_CNT 累计丢包计数
+     * [3:0] ARC_CNT  最近一次发送的自动重发次数
+     */
     ESP_RETURN_ON_ERROR(nrf24_read_register(NRF24_REG_OBSERVE_TX, &value, NULL), TAG, "read observe failed");
     if (lost != NULL) {
         *lost = (uint8_t)((value >> 4) & 0x0F);
