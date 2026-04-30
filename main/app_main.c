@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_rom_sys.h"
+#include "esp_system.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -57,6 +58,76 @@ static const char *TAG = "nrf24_app";
 #define APP_PROTO_CRC_SIZE 2
 #define APP_PROTO_MAX_FRAME_SIZE 32
 #define APP_PROTO_MAX_USER_PAYLOAD (APP_PROTO_MAX_FRAME_SIZE - APP_PROTO_HEADER_SIZE - APP_PROTO_CRC_SIZE)
+
+
+
+
+
+// **************************************************************************
+/** 
+ * @brief 单个时隙的发送状态记录
+ */
+typedef struct {
+    uint32_t slot_num;      // 时隙编号（从任务启动时累计）
+    bool     attempted;     // 是否尝试发送（受MAC机制控制）
+    bool     success;       // 发送是否成功
+    uint8_t  reason;        // 失败原因代码（仅当attempted=true且success=false时有效）
+    // 详细原因说明（对应reason字段）
+    // 0: 未尝试发送（信道繁忙）
+    // 1: 无线传输失败（ACK丢失/超时）
+    // 2: 未尝试发送（概率拒绝）
+    // 3: 其他发送失败
+} slot_stat_t;
+
+/**
+ * @brief X包发送任务的统计上下文
+ */
+typedef struct {
+    uint32_t target_count;  // 目标发送包数（X）
+    uint32_t sent_count;    // 已成功发送包数
+    uint32_t total_slots;   // 从任务开始到完成X包的总时隙数
+    slot_stat_t *stats;     // 时隙记录数组（动态分配）
+    size_t       max_slots;// stats数组容量
+} tx_stat_context_t;
+
+
+// 全局统计上下文（上位机任务专用）
+static tx_stat_context_t s_gui_stat_ctx = {0};
+
+/**
+ * @brief 为X包发送任务初始化统计
+ * @param target_count 需要成功发送的数据包数量
+ * @param max_slots    预分配的最大时隙记录数（建议 = target_count * 3）
+ */
+void gui_stat_init(uint32_t target_count, size_t max_slots) {
+    // 释放旧资源
+    if (s_gui_stat_ctx.stats) {
+        free(s_gui_stat_ctx.stats);
+        memset(&s_gui_stat_ctx, 0, sizeof(s_gui_stat_ctx));
+    }
+    
+    // 初始化新上下文
+    if (max_slots == 0) {
+        max_slots = 1;
+    }
+    s_gui_stat_ctx.target_count = target_count;
+    s_gui_stat_ctx.sent_count = 0;
+    s_gui_stat_ctx.total_slots = 0;
+    s_gui_stat_ctx.max_slots = max_slots;
+    s_gui_stat_ctx.stats = calloc(max_slots, sizeof(slot_stat_t));
+    assert(s_gui_stat_ctx.stats);
+}
+
+/**
+ * @brief 获取当前统计结果
+ */
+const tx_stat_context_t* gui_stat_get_result(void) {
+    return &s_gui_stat_ctx;
+}
+
+
+// **************************************
+
 
 typedef struct {
     uint16_t seq;
@@ -237,6 +308,19 @@ typedef struct {
 static QueueHandle_t s_tx_cmd_queue;
 static volatile bool s_tx_enabled = true;
 static volatile bool s_tx_abort = false;
+
+typedef enum {
+    APP_MAC_ALOHA = 0,
+    APP_MAC_CSMA,
+} app_mac_mode_t;
+
+static app_mac_mode_t s_mac_mode = APP_MAC_ALOHA;
+static uint8_t s_mac_q_percent = 100;
+static uint32_t s_slot_ms = 20;
+static uint32_t s_csma_window_slots = 1;
+static uint32_t s_task_slot_limit = 0;
+static uint64_t s_slot_seq = 0;
+static uint64_t s_csma_grant_until = 0;
 #endif
 
 #ifndef CONFIG_NRF24_PIPE1_ADDR
@@ -643,6 +727,99 @@ static bool app_parse_u32_token(char **p, uint32_t *out)
     return true;
 }
 
+static bool app_token_eq(const char *a, const char *b)
+{
+    if (a == NULL || b == NULL) {
+        return false;
+    }
+    while (*a != '\0' && *b != '\0') {
+        if (toupper((int)(unsigned char)*a) != toupper((int)(unsigned char)*b)) {
+            return false;
+        }
+        ++a;
+        ++b;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+#if defined(CONFIG_NRF24_ROLE_TX)
+static const char *app_mac_mode_name(app_mac_mode_t mode)
+{
+    return mode == APP_MAC_CSMA ? "CSMA" : "ALOHA";
+}
+
+static uint32_t app_rand_percent(void)
+{
+    return esp_random() % 100U;
+}
+
+static uint32_t app_slot_ticks(void)
+{
+    uint32_t ms = s_slot_ms > 0 ? s_slot_ms : 1;
+    uint32_t ticks = (uint32_t)pdMS_TO_TICKS(ms);
+    return ticks > 0 ? ticks : 1;
+}
+
+static uint32_t app_interval_to_slots(uint32_t interval_ms)
+{
+    uint32_t slot = s_slot_ms > 0 ? s_slot_ms : 1;
+    if (interval_ms == 0) {
+        return 1;
+    }
+    uint32_t slots = interval_ms / slot;
+    if ((interval_ms % slot) != 0) {
+        ++slots;
+    }
+    return slots == 0 ? 1 : slots;
+}
+
+static void app_wait_slots(uint32_t slots, TickType_t *last_wake, TickType_t slot_ticks)
+{
+    if (slots == 0) {
+        slots = 1;
+    }
+    for (uint32_t i = 0; i < slots; ++i) {
+        vTaskDelayUntil(last_wake, slot_ticks);
+        ++s_slot_seq;
+    }
+}
+
+typedef enum {
+    APP_TX_GATE_ALLOW = 0,
+    APP_TX_GATE_BUSY,
+    APP_TX_GATE_BACKOFF,
+    APP_TX_GATE_PROB_REJECT,
+} app_tx_gate_result_t;
+
+static app_tx_gate_result_t app_tx_gate_decide(bool *prob_ok)
+{
+    // CSMA: 信道繁忙后，退避 s_csma_window_slots 个时隙再允许检测。
+    if (s_mac_mode == APP_MAC_CSMA) {
+        if (s_slot_seq < s_csma_grant_until) {
+            return APP_TX_GATE_BACKOFF;
+        }
+
+        bool rpd = false;
+        if (nrf24_carrier_sense(200, &rpd) == ESP_OK) {
+            if (rpd) {
+                s_csma_grant_until = s_slot_seq + s_csma_window_slots + 1U;
+                return APP_TX_GATE_BUSY;
+            }
+        }
+    }
+
+    // 概率判定（CSMA空闲时 / ALOHA模式 / 授权窗口内均需执行）
+    const uint32_t rand_percent = app_rand_percent();
+    const bool pass_prob_test = (rand_percent < s_mac_q_percent);
+
+    if (prob_ok) {
+        *prob_ok = pass_prob_test;
+    }
+
+    return pass_prob_test ? APP_TX_GATE_ALLOW : APP_TX_GATE_PROB_REJECT;
+}
+#endif
+
 static void app_control_send_uart(void *user, const char *line)
 {
     (void)user;
@@ -702,8 +879,13 @@ static void app_reset_stats(void)
 static void app_reply_stats(const app_control_io_t *io)
 {
 #if defined(CONFIG_NRF24_ROLE_TX)
-    app_control_replyf(io, "STAT role=TX enabled=%d queued=%lu sent=%lu ack_ok=%lu ack_fail=%lu retries_sum=%lu retries_max=%lu next_seq=%u",
+    app_control_replyf(io, "STAT role=TX enabled=%d mac=%s q=%u slot_ms=%lu csma_win=%lu slot_limit=%lu queued=%lu sent=%lu ack_ok=%lu ack_fail=%lu retries_sum=%lu retries_max=%lu next_seq=%u",
                        s_tx_enabled ? 1 : 0,
+                       app_mac_mode_name(s_mac_mode),
+                       (unsigned)s_mac_q_percent,
+                       (unsigned long)s_slot_ms,
+                       (unsigned long)s_csma_window_slots,
+                       (unsigned long)s_task_slot_limit,
                        (unsigned long)s_tx_stats.burst_queued,
                        (unsigned long)s_tx_stats.frame_sent,
                        (unsigned long)s_tx_stats.tx_ok,
@@ -746,7 +928,7 @@ static void app_handle_control_line(const app_control_io_t *io, char *line)
 
     if (strcmp(cmd, "HELP") == 0) {
 #if defined(CONFIG_NRF24_ROLE_TX)
-        app_control_reply(io, "CMD: ENABLE <0|1>, BURST <count> <interval_ms> <ascii>, BURSTHEX <count> <interval_ms> <hex>, STOP, STATUS, RESETSTATS");
+        app_control_reply(io, "CMD: ENABLE <0|1>, MAC <ALOHA|CSMA> <q_percent>, SLOT <slot_ms> <csma_window>, SLOTLIMIT <max_slots>, BURST <count> <interval_ms> <ascii>, BURSTHEX <count> <interval_ms> <hex>, STOP, STATUS, RESETSTATS");
 #else
         app_control_reply(io, "CMD: STATUS, RESETSTATS");
 #endif
@@ -766,6 +948,86 @@ static void app_handle_control_line(const app_control_io_t *io, char *line)
             s_tx_abort = true;
         }
         app_control_reply(io, s_tx_enabled ? "OK ENABLED" : "OK DISABLED");
+        return;
+    }
+
+    if (strncmp(cmd, "MAC", 3) == 0) {
+        char *p = app_trim_left(cmd + 3);
+        if (*p == '\0') {
+            app_control_replyf(io, "OK MAC mode=%s q=%u", app_mac_mode_name(s_mac_mode), (unsigned)s_mac_q_percent);
+            return;
+        }
+
+        char mode_token[12] = {0};
+        size_t idx = 0;
+        while (*p != '\0' && !isspace((int)(unsigned char)*p) && idx + 1 < sizeof(mode_token)) {
+            mode_token[idx++] = *p++;
+        }
+        mode_token[idx] = '\0';
+        p = app_trim_left(p);
+
+        if (app_token_eq(mode_token, "ALOHA")) {
+            s_mac_mode = APP_MAC_ALOHA;
+        } else if (app_token_eq(mode_token, "CSMA")) {
+            s_mac_mode = APP_MAC_CSMA;
+        } else {
+            app_control_reply(io, "ERR usage: MAC <ALOHA|CSMA> <q_percent>");
+            return;
+        }
+
+        if (*p != '\0') {
+            uint32_t q = 0;
+            if (!app_parse_u32_token(&p, &q) || q > 100) {
+                app_control_reply(io, "ERR q_percent must be 0..100");
+                return;
+            }
+            s_mac_q_percent = (uint8_t)q;
+        }
+
+        app_control_replyf(io, "OK MAC mode=%s q=%u", app_mac_mode_name(s_mac_mode), (unsigned)s_mac_q_percent);
+        return;
+    }
+
+    if (strncmp(cmd, "SLOTLIMIT", 9) == 0) {
+        char *p = app_trim_left(cmd + 9);
+        if (*p == '\0') {
+            app_control_replyf(io, "OK SLOTLIMIT %lu", (unsigned long)s_task_slot_limit);
+            return;
+        }
+
+        uint32_t limit = 0;
+        if (!app_parse_u32_token(&p, &limit)) {
+            app_control_reply(io, "ERR slot_limit must be >= 0");
+            return;
+        }
+        s_task_slot_limit = limit;
+        app_control_replyf(io, "OK SLOTLIMIT %lu", (unsigned long)s_task_slot_limit);
+        return;
+    }
+
+    if (strncmp(cmd, "SLOT", 4) == 0) {
+        char *p = app_trim_left(cmd + 4);
+        if (*p == '\0') {
+            app_control_replyf(io, "OK SLOT ms=%lu csma_win=%lu", (unsigned long)s_slot_ms, (unsigned long)s_csma_window_slots);
+            return;
+        }
+
+        uint32_t slot_ms = 0;
+        uint32_t win = 0;
+        if (!app_parse_u32_token(&p, &slot_ms) || slot_ms == 0) {
+            app_control_reply(io, "ERR slot_ms must be >= 1");
+            return;
+        }
+        if (!app_parse_u32_token(&p, &win) || win == 0) {
+            app_control_reply(io, "ERR csma_window must be >= 1");
+            return;
+        }
+
+        s_slot_ms = slot_ms;
+        s_csma_window_slots = win;
+        s_csma_grant_until = 0;
+        s_slot_seq = 0;
+        app_control_replyf(io, "OK SLOT ms=%lu csma_win=%lu", (unsigned long)s_slot_ms, (unsigned long)s_csma_window_slots);
         return;
     }
 
@@ -821,6 +1083,14 @@ static void app_handle_control_line(const app_control_io_t *io, char *line)
     if (xQueueSend(s_tx_cmd_queue, &req, pdMS_TO_TICKS(30)) != pdTRUE) {
         app_control_reply(io, "ERR queue full");
         return;
+    }
+
+    {
+        size_t max_slots = (size_t)count * (size_t)(s_csma_window_slots + 2U);
+        if (s_task_slot_limit > 0 && (size_t)s_task_slot_limit > max_slots) {
+            max_slots = (size_t)s_task_slot_limit;
+        }
+        gui_stat_init(count, max_slots);
     }
 
     s_tx_stats.burst_queued++;
@@ -1062,32 +1332,98 @@ static void app_tx_task(void *arg)
 {
     (void)arg;
     app_tx_burst_cmd_t burst = {0};
+    TickType_t last_wake = xTaskGetTickCount();
 
     while (1) {
         if (xQueueReceive(s_tx_cmd_queue, &burst, portMAX_DELAY) != pdTRUE) {
             continue;
         }
 
+        last_wake = xTaskGetTickCount();
+        
         if (!s_tx_enabled) {
             ESP_LOGW(TAG, "TX disabled, drop burst(count=%lu)", (unsigned long)burst.count);
             continue;
         }
-
+        
         s_tx_abort = false;
 
-        for (uint32_t i = 0; i < burst.count; ++i) {
+        uint32_t burst_index = 0;
+        uint16_t current_seq = s_tx_stats.next_seq;
+
+        while (burst_index < burst.count) {
             if (!s_tx_enabled || s_tx_abort) {
-                ESP_LOGW(TAG, "TX burst aborted at %lu/%lu", (unsigned long)i, (unsigned long)burst.count);
+                ESP_LOGW(TAG, "TX burst aborted at %lu/%lu", (unsigned long)burst_index, (unsigned long)burst.count);
                 break;
             }
 
+            /* 严格时隙：每个时隙只尝试一次发送。 */
+            TickType_t slot_ticks = app_slot_ticks();
+            uint32_t slots = app_interval_to_slots(burst.interval_ms);
+            app_wait_slots(slots, &last_wake, slot_ticks);
+
+            s_gui_stat_ctx.total_slots += slots;
+            if (s_task_slot_limit > 0 && s_gui_stat_ctx.total_slots > s_task_slot_limit) {
+                ESP_LOGW(TAG, "GUI_STAT: Sent %u/%u packets in %u slots (timeout)",
+                         s_gui_stat_ctx.sent_count,
+                         s_gui_stat_ctx.target_count,
+                         (unsigned)s_task_slot_limit);
+                break;
+            }
+
+            const uint32_t current_slot = s_gui_stat_ctx.total_slots - 1U;
+            slot_stat_t *stat = NULL;
+            if (s_gui_stat_ctx.stats != NULL && current_slot < s_gui_stat_ctx.max_slots) {
+                stat = &s_gui_stat_ctx.stats[current_slot];
+                stat->slot_num = current_slot;
+                stat->attempted = false;
+                stat->success = false;
+                stat->reason = 0;
+            }
+
+            /* ALOHA/CSMA 发送门控：仅按 q 概率（与可选的忙闲判断）决定本次是否发送。 */
+            {
+                bool prob_ok = true;
+                app_tx_gate_result_t gate = app_tx_gate_decide(&prob_ok);
+                if (gate != APP_TX_GATE_ALLOW) {
+                    if (stat != NULL) {
+                        if (gate == APP_TX_GATE_PROB_REJECT) {
+                            stat->reason = 2;
+                        } else {
+                            stat->reason = 0;
+                        }
+                    }
+                    if (stat != NULL) {
+                        ESP_LOGI(TAG, "GUI_STAT: slot=%u attempted=%u success=%u reason=%u",
+                                 (unsigned)stat->slot_num,
+                                 stat->attempted ? 1U : 0U,
+                                 stat->success ? 1U : 0U,
+                                 (unsigned)stat->reason);
+                    }
+#if CONFIG_NRF24_LOG_LEVEL_VERBOSE
+                    if (gate == APP_TX_GATE_BUSY) {
+                        ESP_LOGI(TAG, "TX gate: channel busy, skip");
+                    } else if (gate == APP_TX_GATE_BACKOFF) {
+                        ESP_LOGI(TAG, "TX gate: csma backoff window, skip");
+                    } else if (gate == APP_TX_GATE_PROB_REJECT && !prob_ok) {
+                        ESP_LOGI(TAG, "TX gate: prob reject, skip");
+                    }
+#endif
+                    continue;
+                }
+            }
+
+            // ===== 标记为已尝试 =====
+            if (stat != NULL) {
+                stat->attempted = true;
+            }
             /* 固定长度载荷发送：不足补零，和静态 payload 配置对齐。 */
 #if CONFIG_NRF24_TX_POWER_SAVE
             nrf24_power_up();
 #endif
             uint8_t payload[CONFIG_NRF24_PAYLOAD_SIZE] = {0};
             app_proto_frame_t frame = {0};
-            frame.seq = s_tx_stats.next_seq++;
+            frame.seq = current_seq;
             frame.flags = 0;
             frame.payload_len = burst.len > APP_PROTO_MAX_USER_PAYLOAD ? APP_PROTO_MAX_USER_PAYLOAD : (uint8_t)burst.len;
             if (frame.payload_len > 0) {
@@ -1102,6 +1438,29 @@ static void app_tx_task(void *arg)
             }
 
             esp_err_t err = nrf24_send_payload(payload, sizeof(payload), pdMS_TO_TICKS(120));
+            
+            // ===== 新增：记录发送结果 =====
+            if (stat != NULL) {
+                stat->success = (err == ESP_OK);
+                if (!stat->success) {
+                    stat->reason = (err == ESP_ERR_TIMEOUT) ? 1 : 3;
+                }
+                ESP_LOGI(TAG, "GUI_STAT: slot=%u attempted=%u success=%u reason=%u",
+                         (unsigned)stat->slot_num,
+                         stat->attempted ? 1U : 0U,
+                         stat->success ? 1U : 0U,
+                         (unsigned)stat->reason);
+            }
+            
+            // ===== 新增：检查是否完成X包目标 =====
+            if (err == ESP_OK && s_gui_stat_ctx.target_count > 0) {
+                if (++s_gui_stat_ctx.sent_count >= s_gui_stat_ctx.target_count) {
+                    ESP_LOGI(TAG, "GUI_STAT: Sent %u/%u packets in %u slots",
+                             s_gui_stat_ctx.sent_count,
+                             s_gui_stat_ctx.target_count,
+                             s_gui_stat_ctx.total_slots);
+                }
+            }
             s_tx_stats.frame_sent++;
             if (err == ESP_OK) {
                 uint8_t lost = 0;
@@ -1114,12 +1473,15 @@ static void app_tx_task(void *arg)
                 }
                 ESP_LOGI(TAG,
                          "TX ok burst=%lu/%lu seq=%u retries=%u lost=%u payload=%u",
-                         (unsigned long)(i + 1),
+                         (unsigned long)(burst_index + 1),
                          (unsigned long)burst.count,
                          (unsigned)frame.seq,
                          retries,
                          lost,
                          (unsigned)frame.payload_len);
+                s_tx_stats.next_seq++;
+                current_seq = s_tx_stats.next_seq;
+                ++burst_index;
             } else {
                 uint8_t status = nrf24_get_status();
                 uint8_t lost = 0;
@@ -1132,9 +1494,6 @@ static void app_tx_task(void *arg)
         #if CONFIG_NRF24_TX_POWER_SAVE
             nrf24_power_down();
         #endif
-            if (burst.interval_ms > 0) {
-                vTaskDelay(pdMS_TO_TICKS(burst.interval_ms));
-            }
         }
     }
 }

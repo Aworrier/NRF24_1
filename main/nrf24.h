@@ -146,6 +146,11 @@ esp_err_t nrf24_get_lost_and_retries(uint8_t *lost, uint8_t *retries);
 /* 读取 STATUS 寄存器原始值。 */
 uint8_t nrf24_get_status(void);
 
+/* 读取 RPD（接收功率检测）位：true 表示最近检测到较强信号。 */
+esp_err_t nrf24_read_rpd(bool *busy);
+/* 进行一次载波侦听：临时切到 RX、等待一小段时间、读取 RPD。 */
+esp_err_t nrf24_carrier_sense(uint16_t listen_us, bool *busy);
+
 /* Optional: IRQ queue helper for task-based application design */
 /* 安装 IRQ 回调并把事件投递到 queue。 */
 esp_err_t nrf24_irq_queue_install(QueueHandle_t queue);

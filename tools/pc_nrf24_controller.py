@@ -15,7 +15,8 @@ class Nrf24ControllerApp:
     def __init__(self, root: tk.Tk, initial_config: dict | None = None) -> None:
         self.root = root
         self.root.title("NRF24 上位机控制台")
-        self.root.geometry("860x620")
+        self.root.geometry("980x820")
+        self.root.minsize(920, 720)
 
         self.config_path = Path.home() / ".nrf24_controller_gui.json"
 
@@ -32,9 +33,14 @@ class Nrf24ControllerApp:
         self.tcp_port_var = tk.StringVar(value="3333")
         self.token_var = tk.StringVar(value="nrf24")
         self.enable_var = tk.BooleanVar(value=True)
+        self.mac_mode_var = tk.StringVar(value="ALOHA")
+        self.mac_q_var = tk.StringVar(value="100")
+        self.slot_ms_var = tk.StringVar(value="20")
+        self.csma_win_var = tk.StringVar(value="1")
+        self.slot_limit_var = tk.StringVar(value="0")
 
         self.count_var = tk.StringVar(value="10")
-        self.interval_var = tk.StringVar(value="30")
+        self.interval_var = tk.StringVar(value="0")
         self.mode_var = tk.StringVar(value="ASCII")
         self.payload_var = tk.StringVar(value="HELLO_NRF24")
         self.auto_poll_var = tk.BooleanVar(value=True)
@@ -59,7 +65,20 @@ class Nrf24ControllerApp:
             "gap": tk.StringVar(value="0"),
             "dup": tk.StringVar(value="0"),
             "ooo": tk.StringVar(value="0"),
+            "mac": tk.StringVar(value="-"),
+            "q": tk.StringVar(value="-"),
+            "slot_ms": tk.StringVar(value="-"),
+            "csma_win": tk.StringVar(value="-"),
+            "slot_limit": tk.StringVar(value="-"),
         }
+
+        # 新增以下代码：
+        # 用于保存时隙统计的列表
+        self.slot_statistics = [] 
+        # 用于标记是否正在进行X包统计任务
+        self.is_collecting = False 
+        # （可选）定义一个用于在UI上显示统计摘要的变量
+        self.xmit_summary = tk.StringVar(value="等待开始...")
 
         self._build_ui()
         self._refresh_ports()
@@ -77,6 +96,11 @@ class Nrf24ControllerApp:
             ("mode", self.mode_var),
             ("payload", self.payload_var),
             ("schedule_time", self.schedule_time_var),
+            ("mac_mode", self.mac_mode_var),
+            ("mac_q", self.mac_q_var),
+            ("slot_ms", self.slot_ms_var),
+            ("csma_win", self.csma_win_var),
+            ("slot_limit", self.slot_limit_var),
         ):
             value = config.get(key)
             if value is not None:
@@ -109,6 +133,11 @@ class Nrf24ControllerApp:
             "mode": self.mode_var.get(),
             "payload": self.payload_var.get(),
             "schedule_time": self.schedule_time_var.get(),
+            "mac_mode": self.mac_mode_var.get(),
+            "mac_q": self.mac_q_var.get(),
+            "slot_ms": self.slot_ms_var.get(),
+            "csma_win": self.csma_win_var.get(),
+            "slot_limit": self.slot_limit_var.get(),
             "auto_poll": self.auto_poll_var.get(),
             "enable_tx": self.enable_var.get(),
         }
@@ -147,17 +176,46 @@ class Nrf24ControllerApp:
         tk.Button(top, text="断开", command=self._disconnect, width=12).grid(row=0, column=6, padx=6)
         tk.Button(top, text="Help", command=self._show_help, width=10).grid(row=0, column=7, padx=6)
 
-        cmd = tk.LabelFrame(self.root, text="发包命令")
+        # ===== 新增：X包发送统计面板 =====
+        stats_frame = tk.LabelFrame(self.root, text="发送统计详情 (X包任务)")
+        stats_frame.pack(fill=tk.X, expand=False, padx=10, pady=6)
+
+        # 摘要标签（放在面板顶部）
+        tk.Label(stats_frame, textvariable=self.xmit_summary, fg="blue").pack(anchor="w", padx=4, pady=2)
+
+        # 滚动文本框（用于显示详细的时隙记录）
+        self.stats_text = scrolledtext.ScrolledText(stats_frame, height=6, state='disabled')
+        self.stats_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        # ==================================
+
+        
+        slot = tk.LabelFrame(self.root, text="时隙与MAC设置")
+        slot.pack(fill=tk.X, padx=10, pady=6)
+
+        tk.Label(slot, text="时隙(ms)").grid(row=0, column=0, padx=6, pady=8, sticky="w")
+        tk.Entry(slot, textvariable=self.slot_ms_var, width=8).grid(row=0, column=1, padx=6, sticky="w")
+        tk.Label(slot, text="CSMA窗口(时隙)").grid(row=0, column=2, padx=6, sticky="w")
+        tk.Entry(slot, textvariable=self.csma_win_var, width=8).grid(row=0, column=3, padx=6, sticky="w")
+        tk.Button(slot, text="应用时隙设置", command=self._apply_slot_config, width=12).grid(row=0, column=4, padx=6, sticky="w")
+
+        tk.Label(slot, text="任务时隙上限(T)").grid(row=0, column=5, padx=6, sticky="w")
+        tk.Entry(slot, textvariable=self.slot_limit_var, width=8).grid(row=0, column=6, padx=6, sticky="w")
+        tk.Button(slot, text="应用时隙上限", command=self._apply_slot_limit, width=12).grid(row=0, column=7, padx=6, sticky="w")
+
+        tk.Label(slot, text="MAC模式").grid(row=1, column=0, padx=6, pady=8, sticky="w")
+        tk.OptionMenu(slot, self.mac_mode_var, "ALOHA", "CSMA").grid(row=1, column=1, padx=6, sticky="w")
+        tk.Label(slot, text="q(0-100)").grid(row=1, column=2, padx=6, sticky="w")
+        tk.Entry(slot, textvariable=self.mac_q_var, width=8).grid(row=1, column=3, padx=6, sticky="w")
+        tk.Button(slot, text="应用MAC设置", command=self._apply_mac_config, width=12).grid(row=1, column=4, padx=6, sticky="w")
+
+        cmd = tk.LabelFrame(self.root, text="发送设置")
         cmd.pack(fill=tk.X, padx=10, pady=6)
 
-        tk.Label(cmd, text="发送次数").grid(row=0, column=0, padx=6, pady=8, sticky="w")
+        tk.Label(cmd, text="连续包数").grid(row=0, column=0, padx=6, pady=8, sticky="w")
         tk.Entry(cmd, textvariable=self.count_var, width=8).grid(row=0, column=1, padx=6)
 
-        tk.Label(cmd, text="间隔(ms)").grid(row=0, column=2, padx=6, sticky="w")
-        tk.Entry(cmd, textvariable=self.interval_var, width=10).grid(row=0, column=3, padx=6)
-
-        tk.Label(cmd, text="模式").grid(row=0, column=4, padx=6, sticky="w")
-        tk.OptionMenu(cmd, self.mode_var, "ASCII", "HEX").grid(row=0, column=5, padx=6)
+        tk.Label(cmd, text="模式").grid(row=0, column=2, padx=6, sticky="w")
+        tk.OptionMenu(cmd, self.mode_var, "ASCII", "HEX").grid(row=0, column=3, padx=6)
 
         tk.Label(cmd, text="内容").grid(row=1, column=0, padx=6, pady=8, sticky="w")
         tk.Entry(cmd, textvariable=self.payload_var, width=70).grid(row=1, column=1, columnspan=5, padx=6, sticky="we")
@@ -191,30 +249,43 @@ class Nrf24ControllerApp:
 
         tk.Label(stats, text="角色").grid(row=0, column=0, sticky="w", padx=6, pady=2)
         tk.Label(stats, textvariable=self.stat_vars["role"], width=8, anchor="w").grid(row=0, column=1, padx=6)
-        tk.Label(stats, text="已发送").grid(row=0, column=2, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["sent"], width=8, anchor="w").grid(row=0, column=3, padx=6)
-        tk.Label(stats, text="ACK_OK").grid(row=0, column=4, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["ack_ok"], width=8, anchor="w").grid(row=0, column=5, padx=6)
-        tk.Label(stats, text="ACK_FAIL").grid(row=0, column=6, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["ack_fail"], width=8, anchor="w").grid(row=0, column=7, padx=6)
+        tk.Label(stats, text="MAC").grid(row=0, column=2, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["mac"], width=8, anchor="w").grid(row=0, column=3, padx=6)
+        tk.Label(stats, text="q").grid(row=0, column=4, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["q"], width=6, anchor="w").grid(row=0, column=5, padx=6)
+        tk.Label(stats, text="已发送").grid(row=0, column=6, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["sent"], width=8, anchor="w").grid(row=0, column=7, padx=6)
 
-        tk.Label(stats, text="重传总数").grid(row=1, column=0, sticky="w", padx=6, pady=2)
-        tk.Label(stats, textvariable=self.stat_vars["retries_sum"], width=8, anchor="w").grid(row=1, column=1, padx=6)
-        tk.Label(stats, text="单包最大重传").grid(row=1, column=2, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["retries_max"], width=8, anchor="w").grid(row=1, column=3, padx=6)
-        tk.Label(stats, text="接收包数").grid(row=1, column=4, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["rx_pkt"], width=8, anchor="w").grid(row=1, column=5, padx=6)
-        tk.Label(stats, text="有效帧数").grid(row=1, column=6, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["frame_ok"], width=8, anchor="w").grid(row=1, column=7, padx=6)
+        tk.Label(stats, text="时隙(ms)").grid(row=1, column=0, sticky="w", padx=6, pady=2)
+        tk.Label(stats, textvariable=self.stat_vars["slot_ms"], width=8, anchor="w").grid(row=1, column=1, padx=6)
+        tk.Label(stats, text="CSMA窗口").grid(row=1, column=2, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["csma_win"], width=8, anchor="w").grid(row=1, column=3, padx=6)
 
-        tk.Label(stats, text="CRC失败").grid(row=2, column=0, sticky="w", padx=6, pady=2)
-        tk.Label(stats, textvariable=self.stat_vars["crc_fail"], width=8, anchor="w").grid(row=2, column=1, padx=6)
-        tk.Label(stats, text="序号丢失").grid(row=2, column=2, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["gap"], width=8, anchor="w").grid(row=2, column=3, padx=6)
-        tk.Label(stats, text="重复包").grid(row=2, column=4, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["dup"], width=8, anchor="w").grid(row=2, column=5, padx=6)
-        tk.Label(stats, text="乱序包").grid(row=2, column=6, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["ooo"], width=8, anchor="w").grid(row=2, column=7, padx=6)
+        tk.Label(stats, text="时隙上限").grid(row=1, column=4, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["slot_limit"], width=8, anchor="w").grid(row=1, column=5, padx=6)
+
+        tk.Label(stats, text="重传总数").grid(row=2, column=0, sticky="w", padx=6, pady=2)
+        tk.Label(stats, textvariable=self.stat_vars["retries_sum"], width=8, anchor="w").grid(row=2, column=1, padx=6)
+        tk.Label(stats, text="单包最大重传").grid(row=2, column=2, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["retries_max"], width=8, anchor="w").grid(row=2, column=3, padx=6)
+        tk.Label(stats, text="ACK_OK").grid(row=2, column=4, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["ack_ok"], width=8, anchor="w").grid(row=2, column=5, padx=6)
+        tk.Label(stats, text="ACK_FAIL").grid(row=2, column=6, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["ack_fail"], width=8, anchor="w").grid(row=2, column=7, padx=6)
+
+        tk.Label(stats, text="接收包数").grid(row=3, column=0, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["rx_pkt"], width=8, anchor="w").grid(row=3, column=1, padx=6)
+        tk.Label(stats, text="有效帧数").grid(row=3, column=2, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["frame_ok"], width=8, anchor="w").grid(row=3, column=3, padx=6)
+        tk.Label(stats, text="CRC失败").grid(row=3, column=4, sticky="w", padx=6, pady=2)
+        tk.Label(stats, textvariable=self.stat_vars["crc_fail"], width=8, anchor="w").grid(row=3, column=5, padx=6)
+        tk.Label(stats, text="序号丢失").grid(row=3, column=6, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["gap"], width=8, anchor="w").grid(row=3, column=7, padx=6)
+
+        tk.Label(stats, text="重复包").grid(row=4, column=0, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["dup"], width=8, anchor="w").grid(row=4, column=1, padx=6)
+        tk.Label(stats, text="乱序包").grid(row=4, column=2, sticky="w", padx=6)
+        tk.Label(stats, textvariable=self.stat_vars["ooo"], width=8, anchor="w").grid(row=4, column=3, padx=6)
 
         guide = tk.Label(
             self.root,
@@ -224,8 +295,10 @@ class Nrf24ControllerApp:
         )
         guide.pack(fill=tk.X, padx=12, pady=2)
 
-        self.log = scrolledtext.ScrolledText(self.root, height=18)
-        self.log.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
+        log_frame = tk.LabelFrame(self.root, text="日志终端")
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
+        self.log = scrolledtext.ScrolledText(log_frame, height=20)
+        self.log.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
     def _refresh_ports(self) -> None:
         ports = [p.device for p in list_ports.comports()]
@@ -264,6 +337,7 @@ class Nrf24ControllerApp:
         self.sock = None
         self.conn_type = None
 
+# 它们最终会以 "指令 + 换行符" 的形式通过串口或 TCP 发送给你的设备。在以下_send_line函数里面给出
     def _send_line(self, line: str) -> None:
         if self.conn_type is None:
             messagebox.showerror("错误", "连接未建立")
@@ -376,10 +450,33 @@ class Nrf24ControllerApp:
                     stat_line = self._extract_stat_line(text)
                     if stat_line is not None:
                         self.root.after(0, self._update_stats_from_line, stat_line)
+                
+                if "GUI_STAT:" in text:
+                    # 这是统计结果行
+                    self.root.after(0, self._display_slot_stats, text)
+                    continue # 避免被当成普通日志刷屏
+
             except Exception as exc:
                 self.root.after(0, self._log, f"Reader error: {exc}")
                 break
 
+
+    # 然后在类中定义 _display_slot_stats 函数： 用于_reader_loop中处理包含统计信息的日志行。它会解析日志行中的统计数据，并更新UI显示。同时，它还会检测任务完成的标志，以更新摘要信息并停止统计收集。
+    def _display_slot_stats(self, log_line):
+        if not self.is_collecting:
+            return
+            
+        # 解析并显示
+        self.stats_text.config(state='normal')
+        self.stats_text.insert(tk.END, log_line + "\n")
+        self.stats_text.see(tk.END) # 滚动到底部
+        self.stats_text.config(state='disabled')
+        
+        # 如果检测到任务结束，更新摘要
+        if "in" in log_line and "slots" in log_line:
+            self.xmit_summary.set(f"任务完成！{log_line}")
+            self.is_collecting = False
+            
     def _socket_read_line(self):
         if self.sock is None:
             return b""
@@ -442,6 +539,11 @@ class Nrf24ControllerApp:
             "seq_dup": "dup",
             "ooo": "ooo",
             "seq_out_of_order": "ooo",
+            "mac": "mac",
+            "q": "q",
+            "slot_ms": "slot_ms",
+            "csma_win": "csma_win",
+            "slot_limit": "slot_limit",
         }
         for src_key, dst_key in mapping.items():
             if src_key in kv and dst_key in self.stat_vars:
@@ -453,18 +555,38 @@ class Nrf24ControllerApp:
 
     def _send_burst(self) -> None:
         try:
+            if self.conn_type is None:
+                messagebox.showerror("错误", "请先建立连接")
+                return
+            if not self._apply_mac_config():
+                return
+            if not self._apply_slot_config():
+                return
+            if not self._apply_slot_limit():
+                return
             count = int(self.count_var.get().strip())
-            interval = int(self.interval_var.get().strip())
+
+            # --- 新增逻辑：开启统计 ---
+            # 在发送前，重置本地统计数据
+            self.slot_statistics = []
+            self.is_collecting = True
+            # 更新UI显示
+            self.xmit_summary.set(f"正在发送 {count} 个包，请等待...")
+            self.stats_text.config(state='normal')
+            self.stats_text.delete(1.0, tk.END)
+            self.stats_text.insert(tk.END, f"开始发送任务：目标 {count} 包\n")
+            self.stats_text.config(state='disabled')
+            # --- 统计逻辑结束 ---
+
         except ValueError:
-            messagebox.showerror("错误", "发送次数和间隔必须是整数")
+            messagebox.showerror("错误", "发送次数必须是整数")
             return
 
         if count <= 0:
             messagebox.showerror("错误", "发送次数必须大于 0")
             return
-        if interval < 0:
-            messagebox.showerror("错误", "间隔必须大于等于 0")
-            return
+
+        interval = 0
 
         payload = self.payload_var.get().strip()
         if not payload:
@@ -478,6 +600,56 @@ class Nrf24ControllerApp:
             cmd = f"BURST {count} {interval} {payload}"
 
         self._send_line(cmd)
+
+    def _apply_mac_config(self) -> bool:
+        mode = self.mac_mode_var.get().strip().upper()
+        try:
+            q = int(self.mac_q_var.get().strip())
+        except ValueError:
+            messagebox.showerror("错误", "q 必须是 0-100 的整数")
+            return False
+
+        if mode not in {"ALOHA", "CSMA"}:
+            messagebox.showerror("错误", "MAC 模式必须是 ALOHA 或 CSMA")
+            return False
+        if q < 0 or q > 100:
+            messagebox.showerror("错误", "q 必须在 0-100 之间")
+            return False
+
+        self._send_line(f"MAC {mode} {q}")
+        return True
+
+    def _apply_slot_config(self) -> bool:
+        try:
+            slot_ms = int(self.slot_ms_var.get().strip())
+            win = int(self.csma_win_var.get().strip())
+        except ValueError:
+            messagebox.showerror("错误", "时隙和窗口必须是整数")
+            return False
+
+        if slot_ms <= 0:
+            messagebox.showerror("错误", "时隙必须 >= 1 ms")
+            return False
+        if win <= 0:
+            messagebox.showerror("错误", "CSMA 窗口必须 >= 1")
+            return False
+
+        self._send_line(f"SLOT {slot_ms} {win}")
+        return True
+
+    def _apply_slot_limit(self) -> bool:
+        try:
+            limit = int(self.slot_limit_var.get().strip())
+        except ValueError:
+            messagebox.showerror("错误", "时隙上限必须是整数")
+            return False
+
+        if limit < 0:
+            messagebox.showerror("错误", "时隙上限必须 >= 0")
+            return False
+
+        self._send_line(f"SLOTLIMIT {limit}")
+        return True
 
     def _stop_burst(self) -> None:
         self._send_line("STOP")
@@ -553,7 +725,10 @@ class Nrf24ControllerApp:
             "4. 停止发送: 中止当前突发发送任务。\n"
             "5. 查询状态: 主动发送 STATUS，刷新 ACK/RX 统计。\n"
             "6. 重置统计: 发送 RESETSTATS，清零统计计数。\n"
-            "7. 自动轮询: 每秒自动查询 STATUS，不会自动发送业务载荷。\n\n"
+            "7. 自动轮询: 每秒自动查询 STATUS，不会自动发送业务载荷。\n"
+            "8. MAC 设置: 选择 ALOHA/CSMA 和 q，再点“应用MAC设置”。\n\n"
+            "9. 时隙设置: 配置时隙长度与 CSMA 窗口，再点“应用时隙设置”。\n"
+            "10. 时隙上限: 设置发送任务最多运行 T 个时隙，超过后自动停止。\n\n"
             "无线连接\n"
             "- 设备会开启 SoftAP，默认 SSID 为 NRF24_CTRL。\n"
             "- 无线模式下先自动发送 AUTH token，再执行命令。\n"

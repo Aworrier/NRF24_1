@@ -5,7 +5,6 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
-#include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 /*
@@ -259,6 +258,10 @@ static uint8_t nrf24_encode_retr_delay(uint16_t delay_us)
     return (uint8_t)(step - 1U);
 }
 
+/* --------------------------------------------------------------------------
+ * Section A: 初始化与基础射频配置（偏 PHY 控制面）
+ * -------------------------------------------------------------------------- */
+
 /*
  * 根据配置写入射频参数：信道、速率、功率、地址宽度、重发、动态载荷。
  * 这是初始化阶段最重要的一步。
@@ -427,6 +430,10 @@ void nrf24_deinit(void)
     s_nrf24.initialized = false;
 }
 
+/* --------------------------------------------------------------------------
+ * Section B: 运行时模式切换（PRX/PTX）
+ * -------------------------------------------------------------------------- */
+
 /* 上电并配置 CRC 位。 */
 esp_err_t nrf24_power_up(void)
 {
@@ -531,6 +538,10 @@ esp_err_t nrf24_stop_listening(void)
     return ESP_OK;
 }
 
+/* --------------------------------------------------------------------------
+ * Section C: 数据面收发（简化 MAC 核心路径）
+ * -------------------------------------------------------------------------- */
+
 /*
  * 发送一帧数据并等待结果。
  * 成功条件：TX_DS 置位。
@@ -627,6 +638,10 @@ esp_err_t nrf24_read_rx_payload(nrf24_rx_payload_t *payload)
     return ESP_OK;
 }
 
+/* --------------------------------------------------------------------------
+ * Section D: 状态维护与诊断（IRQ/FIFO/统计）
+ * -------------------------------------------------------------------------- */
+
 /* 写 STATUS 清中断位。 */
 esp_err_t nrf24_clear_irq_flags(void)
 {
@@ -687,6 +702,58 @@ uint8_t nrf24_get_status(void)
     uint8_t status = 0;
     nrf24_cmd(NRF24_CMD_NOP, &status);
     return status;
+}
+
+/* 读取 RPD：当检测到较强信号时置位（非完整 CCA）。 */
+esp_err_t nrf24_read_rpd(bool *busy)
+{
+    ESP_RETURN_ON_FALSE(busy != NULL, ESP_ERR_INVALID_ARG, TAG, "null busy");
+    uint8_t value = 0;
+    ESP_RETURN_ON_ERROR(nrf24_read_register(NRF24_REG_RPD, &value, NULL), TAG, "read rpd failed");
+    *busy = (value & 0x01U) != 0;
+    return ESP_OK;
+}
+
+/*
+ * 载波侦听（简化 CSMA/CCA）：
+ * - 临时切到 RX 模式并拉高 CE。
+ * - 等待 RX 稳定 + listen_us。
+ * - 读取 RPD 判断当前是否有较强能量。
+ * - 恢复到调用前的模式。
+ */
+esp_err_t nrf24_carrier_sense(uint16_t listen_us, bool *busy)
+{
+    ESP_RETURN_ON_FALSE(busy != NULL, ESP_ERR_INVALID_ARG, TAG, "null busy");
+
+    uint8_t cfg = 0;
+    ESP_RETURN_ON_ERROR(nrf24_read_register(NRF24_REG_CONFIG, &cfg, NULL), TAG, "read config failed");
+
+    const bool was_pwr_up = (cfg & NRF24_CONFIG_PWR_UP) != 0;
+    const bool was_rx = (cfg & NRF24_CONFIG_PRIM_RX) != 0;
+
+    uint8_t cfg_rx = (uint8_t)(cfg | NRF24_CONFIG_PWR_UP | NRF24_CONFIG_PRIM_RX);
+    ESP_RETURN_ON_ERROR(nrf24_write_register(NRF24_REG_CONFIG, cfg_rx, NULL), TAG, "set rx config failed");
+
+    nrf24_set_ce(1);
+    esp_rom_delay_us(130);
+    if (listen_us > 0) {
+        esp_rom_delay_us(listen_us);
+    }
+
+    esp_err_t err = nrf24_read_rpd(busy);
+
+    nrf24_set_ce(0);
+
+    uint8_t cfg_restore = cfg;
+    if (!was_rx) {
+        cfg_restore = (uint8_t)(cfg_restore & ~NRF24_CONFIG_PRIM_RX);
+    }
+    if (!was_pwr_up) {
+        cfg_restore = (uint8_t)(cfg_restore & ~NRF24_CONFIG_PWR_UP);
+    }
+    (void)nrf24_write_register(NRF24_REG_CONFIG, cfg_restore, NULL);
+
+    return err;
 }
 
 /* 安装 IRQ 事件队列。 */
