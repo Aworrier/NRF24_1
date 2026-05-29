@@ -1,6 +1,14 @@
 idf_component_register(
     SRCS
         "app_main.c"
+        "app_config.c"
+        "app_control.c"
+        "app_pin_test.c"
+        "app_proto.c"
+        "app_rx.c"
+        "app_stats.c"
+        "app_tx.c"
+        "app_wifi_control.c"
         "nrf24.c"
     INCLUDE_DIRS
         "."

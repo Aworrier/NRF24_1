@@ -1,4 +1,9 @@
-# VS Code + ESP-IDF 开发流程（Windows）
+# VS Code + ESP-IDF Workflow (Windows) / 开发流程（Windows）
+
+## TL;DR / 速读
+
+- English: Install Espressif IDF extension, set target to `esp32s3`, pick COM port, run menuconfig/build/flash/monitor.
+- 中文：安装 ESP-IDF 插件，设置目标为 `esp32s3`，选择串口，然后 menuconfig/build/flash/monitor。
 
 本文档面向本仓库新手，目标是让你在 VS Code 里完成：
 
@@ -118,7 +123,7 @@ ESP32 板子常见 USB 转串口芯片对应驱动如下：
 
 - `ESP-IDF: SDK Configuration editor (Menuconfig)`
 
-本仓库重点配置在 NRF24 菜单：
+本仓库重点配置在 NRF24 菜单（ESP32-S3）：
 
 - 角色（TX / RX）
 - channel

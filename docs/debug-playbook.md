@@ -1,29 +1,35 @@
-# Debug Playbook
+# Debug Playbook / 排障剧本
 
-## Case A: TX 一直超时
-现象:
-- TX 日志持续 `ESP_ERR_TIMEOUT`
+A short checklist for the most common NRF24 issues on ESP32-S3.
+面向 ESP32-S3 + NRF24 的常见问题排查清单。
 
-检查顺序:
-1. 确认 TX 不是 PIN TEST 模式
-2. 打开 `TX disable auto-ack`，先验证单向链路
-3. RX/TX 参数一致: channel, data rate, pipe0, tx addr, addr width
-4. 空口速率降到 250K，功率先设 -12dBm
-5. 给 NRF24 电源加 10uF + 0.1uF 去耦
+## Case A: TX timeout / TX 一直超时
 
-## Case B: RX 只有 alive 没有 payload
-现象:
-- RX 只打印 `RX alive... status=...`
+Symptoms / 现象:
+- TX log keeps printing `ESP_ERR_TIMEOUT`
 
-检查顺序:
-1. 看 TX 是否确实在正常发包（不是 PIN TEST）
-2. 确认 TX 使用的 tx addr 等于 RX 的 pipe0 addr
-3. 先用无 ACK 模式验证能否收到 payload
-4. 再恢复 ACK
+Checklist / 检查顺序:
+1. Make sure TX is not in PIN TEST mode
+2. Disable auto-ack on TX to test one-way link
+3. Match channel, data rate, addr width, pipe0/tx addr
+4. Drop air data rate to 250K and set PA to -12dBm
+5. Add 10uF + 0.1uF decoupling on NRF24 VCC/GND
 
-## Case C: 引脚疑似错误
-操作:
-1. 开启 `NRF24_PIN_TEST_MODE`
-2. 看 CE/CSN 的 exp/act 是否一致
-3. 看 `SPI(tx, rx)` 是否稳定
-4. 通过 `MISOprobe` 判断是否短接或串线
+## Case B: RX alive but no payload / RX 只有 alive 没数据
+
+Symptoms / 现象:
+- RX only prints `RX alive ... status=...`
+
+Checklist / 检查顺序:
+1. TX is actually sending (not PIN TEST)
+2. TX addr == RX pipe0 addr
+3. Try no-ACK mode to confirm raw link
+4. Re-enable auto-ack after one-way link works
+
+## Case C: Suspected wiring / 引脚疑似错误
+
+Steps / 操作:
+1. Enable `NRF24_PIN_TEST_MODE`
+2. Check CE/CSN expected vs actual
+3. Check SPI(tx, rx) patterns
+4. Use MISO probe logs to detect shorts

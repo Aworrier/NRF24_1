@@ -1,5 +1,8 @@
 # 上位机GUI工作流程（TX突发任务 -> RX统计）
 
+English summary: the GUI sends BURST/BURSTHEX over UART/TCP, TX builds frames and sends, RX validates and updates STAT counters.
+英文摘要：GUI 通过 UART/TCP 发送 BURST/BURSTHEX，TX 构帧发送，RX 校验并更新 STAT 统计。
+
 本文描述上位机GUI从发起TX突发任务到RX接收并统计的完整链路。
 
 ## 0. 前置条件

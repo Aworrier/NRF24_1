@@ -117,6 +117,7 @@ static nrf24_ctx_t s_nrf24 = {0};
  * - RX 模式：CE=1 持续监听。
  * - TX 模式：CE 给一个短脉冲触发一次发射。
  */
+/* Drive CE pin high/low. */
 static inline void nrf24_set_ce(int level)
 {
     gpio_set_level(s_nrf24.cfg.pin_ce, level);
@@ -126,6 +127,7 @@ static inline void nrf24_set_ce(int level)
  * IRQ ISR：只做一件事，把事件投递到队列。
  * 原则：ISR 内部不要做重逻辑，真实处理放到任务上下文。
  */
+/* IRQ ISR: push event into queue. */
 static void IRAM_ATTR nrf24_irq_isr(void *arg)
 {
     BaseType_t high_wakeup = pdFALSE;
@@ -143,6 +145,7 @@ static void IRAM_ATTR nrf24_irq_isr(void *arg)
  * 最小 SPI 事务封装。
  * len 使用字节数，内部转换成 bit 长度给 ESP-IDF 驱动。
  */
+/* Perform a single SPI transaction. */
 static esp_err_t nrf24_spi_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
 {
     spi_transaction_t t = {
@@ -154,6 +157,7 @@ static esp_err_t nrf24_spi_transfer(const uint8_t *tx, uint8_t *rx, size_t len)
 }
 
 /* 发送一个简单命令（如 NOP/FLUSH），可选返回 STATUS。 */
+/* Send one-byte SPI command and optional status. */
 static esp_err_t nrf24_cmd(uint8_t cmd, uint8_t *status)
 {
     uint8_t tx[2] = {cmd, NRF24_CMD_NOP};
@@ -166,6 +170,7 @@ static esp_err_t nrf24_cmd(uint8_t cmd, uint8_t *status)
 }
 
 /* 写单字节寄存器。 */
+/* Write one-byte register. */
 static esp_err_t nrf24_write_register(uint8_t reg, uint8_t val, uint8_t *status)
 {
     uint8_t tx[2] = {(uint8_t)(NRF24_CMD_W_REGISTER | (reg & 0x1F)), val};
@@ -178,6 +183,7 @@ static esp_err_t nrf24_write_register(uint8_t reg, uint8_t val, uint8_t *status)
 }
 
 /* 读单字节寄存器。 */
+/* Read one-byte register. */
 static esp_err_t nrf24_read_register(uint8_t reg, uint8_t *val, uint8_t *status)
 {
     uint8_t tx[2] = {(uint8_t)(NRF24_CMD_R_REGISTER | (reg & 0x1F)), NRF24_CMD_NOP};
@@ -191,6 +197,7 @@ static esp_err_t nrf24_read_register(uint8_t reg, uint8_t *val, uint8_t *status)
 }
 
 /* 写多字节寄存器（地址类寄存器常用）。 */
+/* Write multi-byte register. */
 static esp_err_t nrf24_write_buf_reg(uint8_t reg, const uint8_t *buf, size_t len, uint8_t *status)
 {
     ESP_RETURN_ON_FALSE(len <= 32, ESP_ERR_INVALID_ARG, TAG, "invalid len");
@@ -208,6 +215,7 @@ static esp_err_t nrf24_write_buf_reg(uint8_t reg, const uint8_t *buf, size_t len
 }
 
 /* 装载 TX payload，支持 no_ack 命令变体。 */
+/* Load TX payload (optionally no-ack). */
 static esp_err_t nrf24_write_payload(const uint8_t *data, size_t len, bool no_ack)
 {
     ESP_RETURN_ON_FALSE(len <= 32, ESP_ERR_INVALID_ARG, TAG, "invalid payload len");
@@ -224,6 +232,7 @@ static esp_err_t nrf24_write_payload(const uint8_t *data, size_t len, bool no_ac
 }
 
 /* 读取 RX payload。 */
+/* Read RX payload bytes. */
 static esp_err_t nrf24_read_payload(uint8_t *data, size_t len, uint8_t *status)
 {
     ESP_RETURN_ON_FALSE(len <= 32, ESP_ERR_INVALID_ARG, TAG, "invalid payload len");
@@ -243,6 +252,7 @@ static esp_err_t nrf24_read_payload(uint8_t *data, size_t len, uint8_t *status)
 }
 
 /* 把 us 单位的重发延迟编码为 NRF24 寄存器字段。 */
+/* Encode retransmit delay into register field. */
 static uint8_t nrf24_encode_retr_delay(uint16_t delay_us)
 {
     if (delay_us < 250) {
@@ -266,6 +276,7 @@ static uint8_t nrf24_encode_retr_delay(uint16_t delay_us)
  * 根据配置写入射频参数：信道、速率、功率、地址宽度、重发、动态载荷。
  * 这是初始化阶段最重要的一步。
  */
+/* Apply radio configuration to registers. */
 static esp_err_t nrf24_config_radio(void)
 {
     uint8_t reg = 0;
@@ -335,6 +346,7 @@ static esp_err_t nrf24_config_radio(void)
  * 初始化入口：GPIO -> SPI -> 上电 -> 无线参数 -> 清 FIFO/中断。
  * 任何步骤失败都会跳转 err 分支，释放已经申请的资源。
  */
+/* Initialize GPIO/SPI and radio state. */
 esp_err_t nrf24_init(const nrf24_config_t *cfg)
 {
     esp_err_t ret = ESP_OK;
@@ -412,6 +424,7 @@ err:
 }
 
 /* 反初始化：释放 IRQ 和 SPI 资源。 */
+/* Release IRQ handler and SPI resources. */
 void nrf24_deinit(void)
 {
     if (!s_nrf24.initialized) {
@@ -435,6 +448,7 @@ void nrf24_deinit(void)
  * -------------------------------------------------------------------------- */
 
 /* 上电并配置 CRC 位。 */
+/* Power up and enable CRC. */
 esp_err_t nrf24_power_up(void)
 {
     uint8_t config = 0;
@@ -449,6 +463,7 @@ esp_err_t nrf24_power_up(void)
 }
 
 /* 省电模式：先拉低 CE，再清除 PWR_UP。 */
+/* Power down and drop CE. */
 esp_err_t nrf24_power_down(void)
 {
     uint8_t config = 0;
@@ -459,6 +474,7 @@ esp_err_t nrf24_power_down(void)
 }
 
 /* 写 TX 地址。 */
+/* Set TX address register. */
 esp_err_t nrf24_set_tx_address(const uint8_t *addr, size_t len)
 {
     ESP_RETURN_ON_FALSE(addr != NULL, ESP_ERR_INVALID_ARG, TAG, "null addr");
@@ -467,6 +483,7 @@ esp_err_t nrf24_set_tx_address(const uint8_t *addr, size_t len)
 }
 
 /* 写 RX 地址：pipe0/1 全地址，pipe2-5 低字节。 */
+/* Set RX address for a pipe. */
 esp_err_t nrf24_set_rx_address(uint8_t pipe, const uint8_t *addr, size_t len)
 {
     ESP_RETURN_ON_FALSE(pipe < 6, ESP_ERR_INVALID_ARG, TAG, "invalid pipe");
@@ -482,6 +499,7 @@ esp_err_t nrf24_set_rx_address(uint8_t pipe, const uint8_t *addr, size_t len)
 }
 
 /* 设置固定载荷长度。 */
+/* Set fixed payload width for a pipe. */
 esp_err_t nrf24_set_payload_width(uint8_t pipe, uint8_t width)
 {
     ESP_RETURN_ON_FALSE(pipe < 6, ESP_ERR_INVALID_ARG, TAG, "invalid pipe");
@@ -490,18 +508,21 @@ esp_err_t nrf24_set_payload_width(uint8_t pipe, uint8_t width)
 }
 
 /* 使能接收管道位图。 */
+/* Enable RX pipes by mask. */
 esp_err_t nrf24_enable_rx_pipes(uint8_t mask)
 {
     return nrf24_write_register(NRF24_REG_EN_RXADDR, (uint8_t)(mask & 0x3F), NULL);
 }
 
 /* 使能自动应答位图。 */
+/* Enable auto-ack by mask. */
 esp_err_t nrf24_set_auto_ack_mask(uint8_t mask)
 {
     return nrf24_write_register(NRF24_REG_EN_AA, (uint8_t)(mask & 0x3F), NULL);
 }
 
 /* 配置自动重发延迟和次数。 */
+/* Configure auto-retransmit delay/count. */
 esp_err_t nrf24_config_retransmit(uint16_t delay_us, uint8_t count)
 {
     uint8_t delay_field = nrf24_encode_retr_delay(delay_us);
@@ -510,6 +531,7 @@ esp_err_t nrf24_config_retransmit(uint16_t delay_us, uint8_t count)
 }
 
 /* 进入 RX 监听状态。 */
+/* Enter PRX mode and start listening. */
 esp_err_t nrf24_start_listening(void)
 {
     uint8_t config = 0;
@@ -525,6 +547,7 @@ esp_err_t nrf24_start_listening(void)
 }
 
 /* 退出 RX 监听状态。 */
+/* Exit PRX mode and stop listening. */
 esp_err_t nrf24_stop_listening(void)
 {
     uint8_t config = 0;
@@ -547,6 +570,7 @@ esp_err_t nrf24_stop_listening(void)
  * 成功条件：TX_DS 置位。
  * 失败条件：MAX_RT 置位或等待超时。
  */
+/* Send one payload and wait for IRQ result. */
 esp_err_t nrf24_send_payload(const uint8_t *data, size_t len, TickType_t wait_ticks)
 {
     ESP_RETURN_ON_FALSE(data != NULL, ESP_ERR_INVALID_ARG, TAG, "null payload");
@@ -597,6 +621,7 @@ esp_err_t nrf24_send_payload(const uint8_t *data, size_t len, TickType_t wait_ti
  * 从 RX FIFO 读取一帧。
  * 返回 ESP_ERR_NOT_FOUND 表示当前没有可读数据。
  */
+/* Read one payload from RX FIFO if available. */
 esp_err_t nrf24_read_rx_payload(nrf24_rx_payload_t *payload)
 {
     ESP_RETURN_ON_FALSE(payload != NULL, ESP_ERR_INVALID_ARG, TAG, "null payload");
@@ -643,6 +668,7 @@ esp_err_t nrf24_read_rx_payload(nrf24_rx_payload_t *payload)
  * -------------------------------------------------------------------------- */
 
 /* 写 STATUS 清中断位。 */
+/* Clear IRQ flags in STATUS register. */
 esp_err_t nrf24_clear_irq_flags(void)
 {
     /* 写 1 清除 RX_DR/TX_DS/MAX_RT。 */
@@ -650,6 +676,7 @@ esp_err_t nrf24_clear_irq_flags(void)
 }
 
 /* 读取并解析 IRQ 状态位。 */
+/* Read STATUS and decode IRQ flags. */
 esp_err_t nrf24_get_irq_status(nrf24_irq_status_t *irq)
 {
     ESP_RETURN_ON_FALSE(irq != NULL, ESP_ERR_INVALID_ARG, TAG, "null irq");
@@ -666,18 +693,21 @@ esp_err_t nrf24_get_irq_status(nrf24_irq_status_t *irq)
 }
 
 /* 清 TX FIFO。 */
+/* Flush TX FIFO. */
 esp_err_t nrf24_flush_tx(void)
 {
     return nrf24_cmd(NRF24_CMD_FLUSH_TX, NULL);
 }
 
 /* 清 RX FIFO。 */
+/* Flush RX FIFO. */
 esp_err_t nrf24_flush_rx(void)
 {
     return nrf24_cmd(NRF24_CMD_FLUSH_RX, NULL);
 }
 
 /* 读取 OBSERVE_TX，导出丢包和重发计数。 */
+/* Read lost/retry counters from OBSERVE_TX. */
 esp_err_t nrf24_get_lost_and_retries(uint8_t *lost, uint8_t *retries)
 {
     uint8_t value = 0;
@@ -697,6 +727,7 @@ esp_err_t nrf24_get_lost_and_retries(uint8_t *lost, uint8_t *retries)
 }
 
 /* 读取 STATUS 原始值，适合调试日志。 */
+/* Read STATUS via NOP command. */
 uint8_t nrf24_get_status(void)
 {
     uint8_t status = 0;
@@ -705,6 +736,7 @@ uint8_t nrf24_get_status(void)
 }
 
 /* 读取 RPD：当检测到较强信号时置位（非完整 CCA）。 */
+/* Read RPD busy flag (energy detect). */
 esp_err_t nrf24_read_rpd(bool *busy)
 {
     ESP_RETURN_ON_FALSE(busy != NULL, ESP_ERR_INVALID_ARG, TAG, "null busy");
@@ -721,6 +753,7 @@ esp_err_t nrf24_read_rpd(bool *busy)
  * - 读取 RPD 判断当前是否有较强能量。
  * - 恢复到调用前的模式。
  */
+/* Perform carrier sense and restore previous mode. */
 esp_err_t nrf24_carrier_sense(uint16_t listen_us, bool *busy)
 {
     ESP_RETURN_ON_FALSE(busy != NULL, ESP_ERR_INVALID_ARG, TAG, "null busy");
@@ -757,6 +790,7 @@ esp_err_t nrf24_carrier_sense(uint16_t listen_us, bool *busy)
 }
 
 /* 安装 IRQ 事件队列。 */
+/* Install IRQ ISR and bind event queue. */
 esp_err_t nrf24_irq_queue_install(QueueHandle_t queue)
 {
     ESP_RETURN_ON_FALSE(queue != NULL, ESP_ERR_INVALID_ARG, TAG, "null queue");
@@ -770,6 +804,7 @@ esp_err_t nrf24_irq_queue_install(QueueHandle_t queue)
 }
 
 /* 移除 IRQ 事件队列与 ISR 绑定。 */
+/* Remove IRQ ISR and unbind event queue. */
 void nrf24_irq_queue_remove(void)
 {
     if (s_nrf24.cfg.pin_irq >= 0) {

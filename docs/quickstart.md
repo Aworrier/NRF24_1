@@ -1,35 +1,40 @@
-# Quickstart
+# Quickstart / 快速开始
 
-## 1. 目标
-在两块 ESP32-S3 + NRF24L01+ 上完成最小收发。
+## Goal / 目标
 
-## 2. 必要接线
+- English: minimal TX/RX link on two ESP32-S3 boards
+- 中文：两块 ESP32-S3 最小收发跑通
+
+## Wiring (ESP32-S3) / 接线
+
 - MOSI: GPIO13
 - MISO: GPIO12
-- SCK: GPIO14
-- CSN: GPIO11
-- CE: GPIO10
-- IRQ: GPIO3
-- VCC: 3.3V
-- GND: GND
+- SCK:  GPIO14
+- CSN:  GPIO11
+- CE:   GPIO10
+- IRQ:  GPIO3
+- VCC:  3.3V (add 10uF + 0.1uF)
+- GND:  GND
 
-## 3. RX 板
-1. `idf.py menuconfig`
-2. NRF24 Configuration:
+## RX Board / RX 板
+
+1. `idf.py set-target esp32s3`
+2. `idf.py menuconfig`
    - Project mode: Tutorial Debug
    - Application role: RX
 3. `idf.py build`
 4. `idf.py -p <RX_PORT> flash monitor`
 
-## 4. TX 板
+## TX Board / TX 板
+
 1. `idf.py menuconfig`
-2. NRF24 Configuration:
    - Project mode: Tutorial Debug
    - Application role: TX
-   - 与 RX 保持相同的 channel/data rate/address width/pipe0
-3. `idf.py build`
-4. `idf.py -p <TX_PORT> flash monitor`
+   - Keep channel/data rate/address consistent with RX
+2. `idf.py build`
+3. `idf.py -p <TX_PORT> flash monitor`
 
-## 5. 成功标志
+## Success Signs / 成功标志
+
 - TX: `TX ok ...`
-- RX: `RX pipe=... len=... data='...'`
+- RX: `RX ok pipe=... len=...`

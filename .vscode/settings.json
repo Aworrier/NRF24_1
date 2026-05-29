@@ -13,6 +13,6 @@
     "--query-driver=**",
     "--compile-commands-dir=c:\\Users\\Dell\\ESP32_device\\NRF24\\build"
   ],
-  "idf.portWin": "COM6",
+  "idf.portWin": "COM7",
   "idf.flashType": "UART"
 }
