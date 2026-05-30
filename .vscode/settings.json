@@ -6,8 +6,8 @@
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
   },
+  "idf.gitPath": "/usr/bin/git",
   "idf.flashType": "UART",
-  "idf.port": "/dev/ttyUSB1",
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ]

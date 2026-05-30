@@ -1,5 +1,9 @@
 # START HERE / 新手入口
 
+> 文件创建日期: 2026-05-30
+> 最后修订: 2026-05-30
+> 适用项目: NRF24_1 (ESP32-S3 + NRF24L01+)
+
 ## 1. Goal / 目标
 
 - 中文：让新手在 10 分钟内跑通 ESP32-S3 + NRF24L01+ 的最小收发
@@ -23,12 +27,10 @@ Tip: add 10uF + 0.1uF decoupling on VCC/GND.
 
 ## 3. First Run / 第一次跑通
 
-1. `idf.py set-target esp32s3`
-2. `idf.py menuconfig`
-   - Project mode: Tutorial Debug
-   - Application role: RX (first board)
-3. `idf.py build`
-4. `idf.py -p <RX_PORT> flash monitor`
+1. `./flash.sh` — 一键编译+烧录（自动选串口）
+   或手动: `idf.py set-target esp32s3` → `idf.py menuconfig` → `idf.py build` → `idf.py -p <PORT> flash monitor`
+2. Project mode: Tutorial Debug
+3. Application role: RX (first board)
 
 Repeat for TX board (role = TX) and keep channel/data rate/address consistent.
 然后把另一块板改为 TX，参数保持一致。
@@ -40,6 +42,8 @@ Repeat for TX board (role = TX) and keep channel/data rate/address consistent.
 
 ## 5. Next Steps / 下一步
 
-- Minimal steps: quickstart.md
-- Code reading order: CODE_WALKTHROUGH.md
-- Troubleshooting: debug-playbook.md
+- Minimal steps: [quickstart.md](quickstart.md)
+- One-click flash: `./flash.sh`
+- PC GUI controller: [pc_gui_workflow.md](pc_gui_workflow.md)
+- Code reading order: [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md)
+- Troubleshooting: [debug-playbook.md](debug-playbook.md)

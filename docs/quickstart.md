@@ -1,5 +1,9 @@
 # Quickstart / 快速开始
 
+> 文件创建日期: 2026-05-30
+> 最后修订: 2026-05-30
+> 适用项目: NRF24_1 (ESP32-S3 + NRF24L01+)
+
 ## Goal / 目标
 
 - English: minimal TX/RX link on two ESP32-S3 boards

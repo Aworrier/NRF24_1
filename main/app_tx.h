@@ -180,3 +180,22 @@ void app_tx_set_slot_limit(uint32_t limit);
  * 返回: 当前限制值（0 = 不限制）。
  */
 uint32_t app_tx_get_slot_limit(void);
+
+/*
+ * 信号发生器（Jammer）控制。
+ *
+ * 启动后在一个独立的高优先级任务中持续发送满载数据包，
+ * 用于产生信道干扰，辅助验证 CSMA 载波侦听（RPD）功能。
+ *
+ * 特点:
+ *   - 绕过 MAC 门控和时隙调度，直接连续发送。
+ *   - 自动禁用 auto-ack（无需等待 ACK，最大化空口占空比）。
+ *   - 与正常 TX burst 功能隔离，互不影响。
+ *   - JAM OFF 后 NRF24 恢复正常配置。
+ *
+ * 参数:
+ *   channel_override: 指定信道（0-125），0 表示使用当前 menuconfig 信道。
+ */
+void app_tx_jam_start(uint8_t channel_override);
+void app_tx_jam_stop(void);
+bool app_tx_jam_is_active(void);

@@ -1,5 +1,9 @@
 # Code Walkthrough / 代码阅读指南
 
+> 文件创建日期: 2026-05-30
+> 最后修订: 2026-05-30
+> 适用项目: NRF24_1 (ESP32-S3 + NRF24L01+)
+
 ## Reading Order / 阅读顺序
 
 1. [main/app_main.c](../main/app_main.c) - high-level startup flow
@@ -10,7 +14,7 @@
 6. [main/app_control.c](../main/app_control.c) + [main/app_wifi_control.c](../main/app_wifi_control.c) - UART/TCP control channel
 7. [main/app_pin_test.c](../main/app_pin_test.c) - GPIO self-test mode
 8. [docs/CODE_DEEP_DIVE.md](CODE_DEEP_DIVE.md) - function-level intent and deeper reasons
-9. [docs/C_LANGUAGE_PRIMER.md](C_LANGUAGE_PRIMER.md) - C and FreeRTOS fundamentals in this repo
+9. [C Language Primer Series](README.md#c-language-primer--c-语言基础系列) - C and FreeRTOS fundamentals in this repo
 
 ## Module Map / 模块地图
 

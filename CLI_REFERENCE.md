@@ -19,6 +19,18 @@ export ESPPORT=/dev/ttyUSB0
 
 ## 2. 编译 & 烧录 & 监视
 
+### 一键烧录（推荐）
+
+```bash
+./flash.sh          # 选串口 → 编译 + 烧录
+./flash.sh monitor  # 选串口 → 编译 + 烧录 + 打开串口监视
+./flash.sh build    # 选串口 → 仅编译（不烧录）
+```
+
+脚本自动激活 ESP-IDF 环境、扫描可用串口、交互式选择后执行。
+
+### 手动命令
+
 ```bash
 # 仅编译
 idf.py build
@@ -31,6 +43,7 @@ idf.py -p /dev/ttyUSB0 flash
 
 # 仅监视串口
 idf.py -p /dev/ttyUSB0 monitor
+idf.py -p /dev/ttyUSB1 monitor
 
 # 烧录并监视 (指定波特率)
 idf.py -p /dev/ttyUSB0 -b 921600 flash monitor

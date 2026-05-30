@@ -1,5 +1,9 @@
 # NRF24 TX/RX 通信路径思维导图（应用层 -> MAC -> PHY）
 
+> 文件创建日期: 2026-05-30
+> 最后修订: 2026-05-30
+> 适用项目: NRF24_1 (ESP32-S3 + NRF24L01+)
+
 English summary: TX/RX flows are now split across `app_tx.c`, `app_rx.c`, `app_proto.c`, and `nrf24.c` for readability.
 英文摘要：TX/RX 逻辑已拆分到 `app_tx.c`、`app_rx.c`、`app_proto.c` 与 `nrf24.c`，便于阅读。
 

@@ -116,6 +116,7 @@ esp_err_t nrf24_set_payload_width(uint8_t pipe, uint8_t width);
 esp_err_t nrf24_enable_rx_pipes(uint8_t mask);
 /* 配置自动应答使能位（位掩码）。 */
 esp_err_t nrf24_set_auto_ack_mask(uint8_t mask);
+esp_err_t nrf24_get_auto_ack_mask(uint8_t *mask);
 
 /* Step 4: TX/RX runtime mode */
 /* 配置自动重发延迟和次数。 */
@@ -128,6 +129,10 @@ esp_err_t nrf24_stop_listening(void);
 /* Step 5: data path */
 /* 发送一帧载荷并在 wait_ticks 时间内等待结果。 */
 esp_err_t nrf24_send_payload(const uint8_t *data, size_t len, TickType_t wait_ticks);
+/* 向 TX FIFO 写入载荷（不触发发送，需配合 CE 脉冲使用）。 */
+esp_err_t nrf24_write_payload(const uint8_t *data, size_t len, bool no_ack);
+/* CE 引脚脉冲（≥10µs），触发一次 PTX 空口发射。 */
+void nrf24_pulse_ce(void);
 /* 从 RX FIFO 取一帧数据；若无数据返回 ESP_ERR_NOT_FOUND。 */
 esp_err_t nrf24_read_rx_payload(nrf24_rx_payload_t *payload);
 

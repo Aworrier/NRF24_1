@@ -509,8 +509,64 @@ static void app_tx_task(void *arg)
     app_tx_stats_t *stats = app_stats_tx();
 
     while (1) {
-        /* 步骤1: 等待下一个 burst 请求（阻塞） */
-        if (xQueueReceive(s_tx_cmd_queue, &burst, portMAX_DELAY) != pdTRUE) {
+        /*
+         * 步骤1: 等待下一个 burst 请求。
+         *
+         * CSMA 空闲 RPD 轮询策略:
+         *   每次空闲周期用 X 队列接收 Burst 命令（超时=1 tick，不阻塞）。
+         *   若无命令，则进入 RX 模式持续侦听 5ms——NRF24 的 RPD 是锁存位，
+         *   只要侦听窗口内任意时刻信号超过 -64dBm 就会被置位，读取后清零。
+         *   单次 5ms 侦听可覆盖约 50% 的空闲时间，远优于短窗口采样。
+         *
+         * 其他模式: 阻塞等待（无超时）。
+         */
+        TickType_t recv_timeout;
+        if (s_mac_mode == APP_MAC_CSMA && s_tx_enabled) {
+            recv_timeout = 0;  /* 非阻塞，立即检查队列 */
+        } else {
+            recv_timeout = portMAX_DELAY;
+        }
+
+        if (xQueueReceive(s_tx_cmd_queue, &burst, recv_timeout) != pdTRUE) {
+            if (s_mac_mode == APP_MAC_CSMA && s_tx_enabled && !app_tx_jam_is_active()) {
+                /*
+                 * 空闲 CSMA 周期: 进入 RX 模式持续侦听 5ms。
+                 * 每 10 次空闲周期输出一次诊断信息，便于确认硬件状态。
+                 */
+                static uint32_t idle_cycle = 0;
+                idle_cycle++;
+
+                /* 侦听前直接读一次 RPD（此时应为 PTX 模式，RPD 不可信） */
+                bool rpd_before = false;
+                nrf24_read_rpd(&rpd_before);  /* 忽略返回值，仅用于对比 */
+
+                bool rpd = false;
+                esp_err_t err = nrf24_carrier_sense(5000, &rpd);
+
+                /* 侦听后立即再读一次 RPD */
+                bool rpd_after = false;
+                nrf24_read_rpd(&rpd_after);
+
+                if (err == ESP_OK) {
+                    if (rpd) {
+                        ESP_LOGI(TAG, "CSMA idle poll: RPD=1 (CHANNEL BUSY)");
+                    }
+                }
+
+                /* 每 10 次（约 500ms）输出一次诊断，无论 RPD 值 */
+                if (idle_cycle % 10 == 1) {
+                    uint8_t status = nrf24_get_status();
+                    ESP_LOGI(TAG, "CSMA diag: cycle=%lu RPD(before=%d, sense=%d, after=%d) status=0x%02X err=%s",
+                             (unsigned long)idle_cycle,
+                             rpd_before ? 1 : 0,
+                             rpd ? 1 : 0,
+                             rpd_after ? 1 : 0,
+                             status,
+                             err == ESP_OK ? "OK" : "FAIL");
+                }
+
+                vTaskDelay(pdMS_TO_TICKS(45));
+            }
             continue;
         }
 
@@ -794,6 +850,133 @@ void app_tx_init(void)
     xTaskCreate(app_tx_task, "nrf24_tx", 4096, NULL, 8, NULL);
 }
 
+/*
+ * =========================================================================
+ * 信号发生器 (Jammer) — 用于产生信道干扰，辅助验证 CSMA/RPD。
+ *
+ * 特点:
+ *   - 独立任务 "nrf24_jam"，与 TX burst 任务完全隔离。
+ *   - 自动禁用 auto-ack，最大化空口占空比。
+ *   - 发送全 0xFF 满载载荷（32 字节），产生最大空口能量。
+ *   - 紧循环发送，包间仅留 50µs PLL 稳定间隙。
+ * =========================================================================
+ */
+
+static volatile bool s_jam_active = false;
+static TaskHandle_t  s_jam_task    = NULL;
+
+/*
+ * Jammer 任务 — 紧循环发送。
+ *
+ * 每轮:
+ *   1. 上电并停止监听（确保 PTX 模式）。
+ *   2. 写入 32 字节全满载荷。
+ *   3. CE 脉冲触发发送（等待 120ms 超时——无 ACK 时通常瞬间完成）。
+ *   4. 极小间隙后立即进入下一轮。
+ *
+ * 不使用 auto-ack：无 ACK 时 NRF24 跳过重发等待，直接完成 TX_DS。
+ */
+static void app_tx_jammer_task(void *arg)
+{
+    (void)arg;
+
+    uint8_t payload[32];
+    memset(payload, 0xFF, sizeof(payload));
+
+    /* 暂存原有 auto-ack 配置，jammer 期间禁用以最大化速率 */
+    uint8_t saved_aa_mask = 0;
+    nrf24_get_auto_ack_mask(&saved_aa_mask);
+    nrf24_set_auto_ack_mask(0);   /* 全部管道禁用 ACK */
+
+    /* 一次性进入 PTX 模式并上电，不在循环内重复调用（省去每轮 ~3ms delay） */
+    nrf24_power_up();
+    nrf24_stop_listening();
+
+    ESP_LOGI(TAG, "Jammer started (no ACK, 32B payload, max rate)");
+
+    uint32_t pkt_count = 0;
+    while (s_jam_active) {
+        /*
+         * 紧循环发送，最小化包间间隔:
+         *   1. 清中断 + 写 TX FIFO（无 ACK 时忽略 ack_payload 参数）。
+         *   2. CE 脉冲触发空口发射（≥10µs 即可）。
+         *   3. 自旋等待 IRQ（无 ACK 时 TX_DS/MAX_RT 通常 <200µs）。
+         *   4. 每 1000 包喂一次狗，避免看门狗复位。
+         */
+        nrf24_irq_status_t irq = {0};
+
+        nrf24_clear_irq_flags();
+        nrf24_write_payload(payload, sizeof(payload), false);
+
+        nrf24_pulse_ce();  /* CE 脉冲触发一次发射（≥10µs） */
+
+        /* 自旋等待 IRQ（无 ACK 时 TX_DS 通常在 ~130µs 内触发） */
+        bool done = false;
+        for (int i = 0; i < 50 && !done; i++) {
+            if (nrf24_get_irq_status(&irq) == ESP_OK) {
+                if (irq.tx_success || irq.tx_failed) {
+                    done = true;
+                }
+            }
+            if (!done) {
+                esp_rom_delay_us(5);  /* 每次自旋 5µs，总共最多 250µs */
+            }
+        }
+        nrf24_clear_irq_flags();
+
+        if (irq.tx_failed) {
+            nrf24_flush_tx();
+        }
+
+        /* 每 1000 包喂狗 + 让出 CPU 1 tick（确保低优先级任务不被饿死） */
+        if (++pkt_count % 1000 == 0) {
+            vTaskDelay(1);
+        }
+    }
+
+    /* 恢复 auto-ack 配置并断电 */
+    nrf24_set_auto_ack_mask(saved_aa_mask);
+    nrf24_power_down();
+    s_jam_task = NULL;
+    ESP_LOGI(TAG, "Jammer stopped (%lu packets sent)", (unsigned long)pkt_count);
+    vTaskDelete(NULL);
+}
+
+void app_tx_jam_start(uint8_t channel_override)
+{
+    if (s_jam_active) {
+        ESP_LOGW(TAG, "Jammer already running");
+        return;
+    }
+
+    s_jam_active = true;
+    xTaskCreate(app_tx_jammer_task, "nrf24_jam", 2048, NULL, 10, &s_jam_task);
+    ESP_LOGI(TAG, "Jammer ON (continuous TX, no ACK)");
+}
+
+void app_tx_jam_stop(void)
+{
+    if (!s_jam_active) {
+        return;
+    }
+    s_jam_active = false;
+    /* 等待任务退出（最多 200ms） */
+    for (int i = 0; i < 20 && s_jam_task != NULL; i++) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    if (s_jam_task != NULL) {
+        vTaskDelete(s_jam_task);
+        s_jam_task = NULL;
+    }
+    nrf24_power_down();
+    ESP_LOGI(TAG, "Jammer OFF");
+}
+
+bool app_tx_jam_is_active(void)
+{
+    return s_jam_active;
+}
+
 #else
 /*
  * =========================================================================
@@ -878,6 +1061,20 @@ bool app_tx_submit_burst(uint32_t count, uint32_t interval_ms, const uint8_t *da
     (void)interval_ms;
     (void)data;
     (void)len;
+    return false;
+}
+
+void app_tx_jam_start(uint8_t channel_override)
+{
+    (void)channel_override;
+}
+
+void app_tx_jam_stop(void)
+{
+}
+
+bool app_tx_jam_is_active(void)
+{
     return false;
 }
 

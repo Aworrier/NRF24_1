@@ -311,6 +311,7 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
             "SLOTLIMIT <max_slots>, "
             "BURST <count> <interval_ms> <ascii>, "
             "BURSTHEX <count> <interval_ms> <hex>, "
+            "JAM <ON|OFF>, "
             "STOP, "
             "STATUS, "
             "RESETSTATS");
@@ -444,7 +445,24 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
     /* 命令: STOP — 立即中止当前 burst 发送 */
     if (strcmp(cmd, "STOP") == 0) {
         app_tx_abort();
+        app_tx_jam_stop();  /* 同时停止信号发生器 */
         app_control_reply(io, "OK STOPPED");
+        return;
+    }
+
+    /* 命令: JAM ON|OFF — 信号发生器控制（产生信道干扰） */
+    if (strncmp(cmd, "JAM", 3) == 0) {
+        char *p = cmd + 3;
+        p = app_trim_left(p);
+        if (app_token_eq(p, "ON")) {
+            app_tx_jam_start(0);
+            app_control_reply(io, "OK JAM ON (continuous TX, no ACK)");
+        } else if (app_token_eq(p, "OFF")) {
+            app_tx_jam_stop();
+            app_control_reply(io, "OK JAM OFF");
+        } else {
+            app_control_reply(io, "ERR usage: JAM ON|OFF");
+        }
         return;
     }
 

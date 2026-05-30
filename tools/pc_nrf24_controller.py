@@ -1,3 +1,4 @@
+import re
 import threading
 import socket
 import json
@@ -15,8 +16,8 @@ class Nrf24ControllerApp:
     def __init__(self, root: tk.Tk, initial_config: dict | None = None) -> None:
         self.root = root
         self.root.title("NRF24 上位机控制台")
-        self.root.geometry("980x820")
-        self.root.minsize(920, 720)
+        self.root.geometry("1060x700")
+        self.root.minsize(960, 620)
 
         self.config_path = Path.home() / ".nrf24_controller_gui.json"
 
@@ -147,158 +148,159 @@ class Nrf24ControllerApp:
             pass
 
     def _build_ui(self) -> None:
-        top = tk.Frame(self.root)
-        top.pack(fill=tk.X, padx=10, pady=8)
+        # ============================================================
+        # Row 0: Connection bar (compact single LabelFrame)
+        # ============================================================
+        conn = tk.LabelFrame(self.root, text="连接设置")
+        conn.pack(fill=tk.X, padx=8, pady=(6, 2))
 
-        tk.Label(top, text="串口").grid(row=0, column=0, sticky="w")
-        self.port_menu = tk.OptionMenu(top, self.port_var, "")
-        self.port_menu.config(width=15)
-        self.port_menu.grid(row=0, column=1, padx=6)
+        tk.Label(conn, text="串口").grid(row=0, column=0, sticky="w", padx=(6, 0))
+        self.port_menu = tk.OptionMenu(conn, self.port_var, "")
+        self.port_menu.config(width=14)
+        self.port_menu.grid(row=0, column=1, padx=3)
 
-        tk.Button(top, text="刷新", command=self._refresh_ports, width=10).grid(row=0, column=2, padx=6)
+        tk.Button(conn, text="刷新", command=self._refresh_ports, width=6).grid(row=0, column=2, padx=3)
 
-        tk.Label(top, text="波特率").grid(row=0, column=3, sticky="w")
-        tk.Entry(top, textvariable=self.baud_var, width=10).grid(row=0, column=4, padx=6)
+        tk.Label(conn, text="波特率").grid(row=0, column=3, sticky="w", padx=(8, 0))
+        tk.Entry(conn, textvariable=self.baud_var, width=9).grid(row=0, column=4, padx=3)
 
-        tk.Label(top, text="方式").grid(row=1, column=0, sticky="w")
-        tk.OptionMenu(top, self.conn_mode_var, "SERIAL", "TCP").grid(row=1, column=1, padx=6, sticky="w")
+        tk.Label(conn, text="方式").grid(row=0, column=5, sticky="w", padx=(10, 0))
+        tk.OptionMenu(conn, self.conn_mode_var, "SERIAL", "TCP").grid(row=0, column=6, padx=3)
 
-        tk.Label(top, text="主机").grid(row=1, column=2, sticky="w")
-        tk.Entry(top, textvariable=self.host_var, width=12).grid(row=1, column=3, padx=6)
+        tk.Label(conn, text="主机").grid(row=0, column=7, sticky="w", padx=(8, 0))
+        tk.Entry(conn, textvariable=self.host_var, width=12).grid(row=0, column=8, padx=3)
 
-        tk.Label(top, text="端口").grid(row=1, column=4, sticky="w")
-        tk.Entry(top, textvariable=self.tcp_port_var, width=10).grid(row=1, column=5, padx=6)
+        tk.Label(conn, text="端口").grid(row=0, column=9, sticky="w", padx=(6, 0))
+        tk.Entry(conn, textvariable=self.tcp_port_var, width=7).grid(row=0, column=10, padx=3)
 
-        tk.Label(top, text="Token").grid(row=1, column=6, sticky="w")
-        tk.Entry(top, textvariable=self.token_var, width=12).grid(row=1, column=7, padx=6)
+        tk.Label(conn, text="Token").grid(row=0, column=11, sticky="w", padx=(6, 0))
+        tk.Entry(conn, textvariable=self.token_var, width=10).grid(row=0, column=12, padx=3)
 
-        tk.Button(top, text="连接", command=self._connect, width=12).grid(row=0, column=5, padx=6)
-        tk.Button(top, text="断开", command=self._disconnect, width=12).grid(row=0, column=6, padx=6)
-        tk.Button(top, text="Help", command=self._show_help, width=10).grid(row=0, column=7, padx=6)
+        tk.Button(conn, text="连接", command=self._connect, width=8).grid(row=0, column=13, padx=(10, 3))
+        tk.Button(conn, text="断开", command=self._disconnect, width=8).grid(row=0, column=14, padx=3)
+        tk.Button(conn, text="帮助", command=self._show_help, width=8).grid(row=0, column=15, padx=(6, 6))
 
-        # ===== 新增：X包发送统计面板 =====
-        stats_frame = tk.LabelFrame(self.root, text="发送统计详情 (X包任务)")
-        stats_frame.pack(fill=tk.X, expand=False, padx=10, pady=6)
+        # ============================================================
+        # Row 1: Middle section — left (settings) + right (stats)
+        # ============================================================
+        middle = tk.Frame(self.root)
+        middle.pack(fill=tk.X, padx=8, pady=2)
 
-        # 摘要标签（放在面板顶部）
-        tk.Label(stats_frame, textvariable=self.xmit_summary, fg="blue").pack(anchor="w", padx=4, pady=2)
+        # --- Left column ---
+        left = tk.Frame(middle)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # 滚动文本框（用于显示详细的时隙记录）
-        self.stats_text = scrolledtext.ScrolledText(stats_frame, height=6, state='disabled')
-        self.stats_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        # ==================================
+        # MAC + Slot settings
+        slot = tk.LabelFrame(left, text="时隙与MAC设置")
+        slot.pack(fill=tk.X, pady=(0, 3))
 
-        
-        slot = tk.LabelFrame(self.root, text="时隙与MAC设置")
-        slot.pack(fill=tk.X, padx=10, pady=6)
+        tk.Label(slot, text="时隙(ms)").grid(row=0, column=0, padx=(6, 0), pady=4, sticky="w")
+        tk.Entry(slot, textvariable=self.slot_ms_var, width=8).grid(row=0, column=1, padx=3, pady=4)
+        tk.Label(slot, text="CSMA窗口").grid(row=0, column=2, padx=(10, 0), pady=4, sticky="w")
+        tk.Entry(slot, textvariable=self.csma_win_var, width=8).grid(row=0, column=3, padx=3, pady=4)
+        tk.Button(slot, text="应用时隙", command=self._apply_slot_config, width=9).grid(row=0, column=4, padx=(10, 3), pady=4)
 
-        tk.Label(slot, text="时隙(ms)").grid(row=0, column=0, padx=6, pady=8, sticky="w")
-        tk.Entry(slot, textvariable=self.slot_ms_var, width=8).grid(row=0, column=1, padx=6, sticky="w")
-        tk.Label(slot, text="CSMA窗口(时隙)").grid(row=0, column=2, padx=6, sticky="w")
-        tk.Entry(slot, textvariable=self.csma_win_var, width=8).grid(row=0, column=3, padx=6, sticky="w")
-        tk.Button(slot, text="应用时隙设置", command=self._apply_slot_config, width=12).grid(row=0, column=4, padx=6, sticky="w")
+        tk.Label(slot, text="上限(T)").grid(row=0, column=5, padx=(6, 0), pady=4, sticky="w")
+        tk.Entry(slot, textvariable=self.slot_limit_var, width=8).grid(row=0, column=6, padx=3, pady=4)
+        tk.Button(slot, text="应用上限", command=self._apply_slot_limit, width=9).grid(row=0, column=7, padx=(8, 3), pady=4)
 
-        tk.Label(slot, text="任务时隙上限(T)").grid(row=0, column=5, padx=6, sticky="w")
-        tk.Entry(slot, textvariable=self.slot_limit_var, width=8).grid(row=0, column=6, padx=6, sticky="w")
-        tk.Button(slot, text="应用时隙上限", command=self._apply_slot_limit, width=12).grid(row=0, column=7, padx=6, sticky="w")
+        tk.Label(slot, text="MAC").grid(row=0, column=8, padx=(10, 0), pady=4, sticky="w")
+        tk.OptionMenu(slot, self.mac_mode_var, "ALOHA", "CSMA").grid(row=0, column=9, padx=3, pady=4)
+        tk.Label(slot, text="q(0-100)").grid(row=0, column=10, padx=(6, 0), pady=4, sticky="w")
+        tk.Entry(slot, textvariable=self.mac_q_var, width=6).grid(row=0, column=11, padx=3, pady=4)
+        tk.Button(slot, text="应用MAC", command=self._apply_mac_config, width=9).grid(row=0, column=12, padx=(6, 3), pady=4)
 
-        tk.Label(slot, text="MAC模式").grid(row=1, column=0, padx=6, pady=8, sticky="w")
-        tk.OptionMenu(slot, self.mac_mode_var, "ALOHA", "CSMA").grid(row=1, column=1, padx=6, sticky="w")
-        tk.Label(slot, text="q(0-100)").grid(row=1, column=2, padx=6, sticky="w")
-        tk.Entry(slot, textvariable=self.mac_q_var, width=8).grid(row=1, column=3, padx=6, sticky="w")
-        tk.Button(slot, text="应用MAC设置", command=self._apply_mac_config, width=12).grid(row=1, column=4, padx=6, sticky="w")
+        # Burst settings
+        burst = tk.LabelFrame(left, text="发送设置")
+        burst.pack(fill=tk.X, pady=(0, 3))
 
-        cmd = tk.LabelFrame(self.root, text="发送设置")
-        cmd.pack(fill=tk.X, padx=10, pady=6)
+        tk.Label(burst, text="包数").grid(row=0, column=0, padx=(6, 0), pady=4, sticky="w")
+        tk.Entry(burst, textvariable=self.count_var, width=8).grid(row=0, column=1, padx=3, pady=4)
+        tk.Label(burst, text="模式").grid(row=0, column=2, padx=(10, 0), pady=4, sticky="w")
+        tk.OptionMenu(burst, self.mode_var, "ASCII", "HEX").grid(row=0, column=3, padx=3, pady=4)
+        tk.Label(burst, text="内容").grid(row=0, column=4, padx=(10, 0), pady=4, sticky="w")
+        tk.Entry(burst, textvariable=self.payload_var, width=36).grid(row=0, column=5, padx=3, pady=4, sticky="we")
+        burst.columnconfigure(5, weight=1)
 
-        tk.Label(cmd, text="连续包数").grid(row=0, column=0, padx=6, pady=8, sticky="w")
-        tk.Entry(cmd, textvariable=self.count_var, width=8).grid(row=0, column=1, padx=6)
-
-        tk.Label(cmd, text="模式").grid(row=0, column=2, padx=6, sticky="w")
-        tk.OptionMenu(cmd, self.mode_var, "ASCII", "HEX").grid(row=0, column=3, padx=6)
-
-        tk.Label(cmd, text="内容").grid(row=1, column=0, padx=6, pady=8, sticky="w")
-        tk.Entry(cmd, textvariable=self.payload_var, width=70).grid(row=1, column=1, columnspan=5, padx=6, sticky="we")
-
-        btns = tk.Frame(self.root)
-        btns.pack(fill=tk.X, padx=10, pady=6)
+        # Action buttons + Schedule
+        actions = tk.LabelFrame(left, text="操作")
+        actions.pack(fill=tk.X, pady=(0, 3))
 
         tk.Checkbutton(
-            btns,
-            text="启用发送",
-            variable=self.enable_var,
-            command=self._toggle_enable,
-        ).pack(side=tk.LEFT, padx=6)
+            actions, text="启用发送", variable=self.enable_var, command=self._toggle_enable,
+        ).grid(row=0, column=0, padx=(6, 4), pady=4, sticky="w")
 
-        tk.Button(btns, text="发送突发包", command=self._send_burst, width=14).pack(side=tk.LEFT, padx=6)
-        tk.Button(btns, text="停止发送", command=self._stop_burst, width=10).pack(side=tk.LEFT, padx=6)
-        tk.Button(btns, text="查询状态", command=self._query_status, width=12).pack(side=tk.LEFT, padx=6)
-        tk.Button(btns, text="重置统计", command=self._reset_stats, width=12).pack(side=tk.LEFT, padx=6)
-        tk.Checkbutton(btns, text="自动轮询", variable=self.auto_poll_var).pack(side=tk.LEFT, padx=6)
+        tk.Button(actions, text="发送突发包", command=self._send_burst, width=12).grid(row=0, column=1, padx=3, pady=4)
+        tk.Button(actions, text="停止发送", command=self._stop_burst, width=10).grid(row=0, column=2, padx=3, pady=4)
+        tk.Button(actions, text="查询状态", command=self._query_status, width=10).grid(row=0, column=3, padx=3, pady=4)
+        tk.Button(actions, text="重置统计", command=self._reset_stats, width=10).grid(row=0, column=4, padx=3, pady=4)
+        tk.Checkbutton(
+            actions, text="自动轮询", variable=self.auto_poll_var,
+        ).grid(row=0, column=5, padx=(10, 4), pady=4, sticky="w")
 
-        sched = tk.LabelFrame(self.root, text="定时发送")
-        sched.pack(fill=tk.X, padx=10, pady=6)
-        tk.Label(sched, text="开始时间").grid(row=0, column=0, padx=6, pady=8, sticky="w")
-        tk.Entry(sched, textvariable=self.schedule_time_var, width=12).grid(row=0, column=1, padx=6)
-        tk.Label(sched, text="格式: HH:MM 或 HH:MM:SS").grid(row=0, column=2, padx=6, sticky="w")
-        tk.Button(sched, text="定时发送突发包", command=self._schedule_burst_at_time, width=16).grid(row=0, column=3, padx=8)
-        tk.Button(sched, text="取消定时", command=self._cancel_scheduled_burst, width=10).grid(row=0, column=4, padx=8)
+        tk.Label(actions, text="干扰信号:", fg="#888").grid(row=0, column=6, padx=(14, 2), pady=4, sticky="w")
+        tk.Button(actions, text="JAM ON", command=self._jam_on, width=8,
+                  bg="#fff0f0").grid(row=0, column=7, padx=1, pady=4)
+        tk.Button(actions, text="JAM OFF", command=self._jam_off, width=8).grid(row=0, column=8, padx=(1, 6), pady=4)
 
-        stats = tk.LabelFrame(self.root, text="ACK / RX 可靠性统计")
-        stats.pack(fill=tk.X, padx=10, pady=6)
+        # Schedule row
+        sched = tk.LabelFrame(left, text="定时发送")
+        sched.pack(fill=tk.X)
 
-        tk.Label(stats, text="角色").grid(row=0, column=0, sticky="w", padx=6, pady=2)
-        tk.Label(stats, textvariable=self.stat_vars["role"], width=8, anchor="w").grid(row=0, column=1, padx=6)
-        tk.Label(stats, text="MAC").grid(row=0, column=2, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["mac"], width=8, anchor="w").grid(row=0, column=3, padx=6)
-        tk.Label(stats, text="q").grid(row=0, column=4, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["q"], width=6, anchor="w").grid(row=0, column=5, padx=6)
-        tk.Label(stats, text="已发送").grid(row=0, column=6, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["sent"], width=8, anchor="w").grid(row=0, column=7, padx=6)
+        tk.Label(sched, text="开始时间").grid(row=0, column=0, padx=(6, 0), pady=4, sticky="w")
+        tk.Entry(sched, textvariable=self.schedule_time_var, width=11).grid(row=0, column=1, padx=3, pady=4)
+        tk.Label(sched, text="(HH:MM 或 HH:MM:SS)", fg="#888").grid(row=0, column=2, padx=3, pady=4, sticky="w")
+        tk.Button(sched, text="定时发送", command=self._schedule_burst_at_time, width=10).grid(row=0, column=3, padx=(10, 3), pady=4)
+        tk.Button(sched, text="取消定时", command=self._cancel_scheduled_burst, width=10).grid(row=0, column=4, padx=3, pady=4)
 
-        tk.Label(stats, text="时隙(ms)").grid(row=1, column=0, sticky="w", padx=6, pady=2)
-        tk.Label(stats, textvariable=self.stat_vars["slot_ms"], width=8, anchor="w").grid(row=1, column=1, padx=6)
-        tk.Label(stats, text="CSMA窗口").grid(row=1, column=2, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["csma_win"], width=8, anchor="w").grid(row=1, column=3, padx=6)
+        # --- Right column: ACK/RX stats ---
+        right = tk.Frame(middle)
+        right.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(8, 0))
 
-        tk.Label(stats, text="时隙上限").grid(row=1, column=4, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["slot_limit"], width=8, anchor="w").grid(row=1, column=5, padx=6)
+        stats = tk.LabelFrame(right, text="ACK / RX 可靠性统计")
+        stats.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(stats, text="重传总数").grid(row=2, column=0, sticky="w", padx=6, pady=2)
-        tk.Label(stats, textvariable=self.stat_vars["retries_sum"], width=8, anchor="w").grid(row=2, column=1, padx=6)
-        tk.Label(stats, text="单包最大重传").grid(row=2, column=2, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["retries_max"], width=8, anchor="w").grid(row=2, column=3, padx=6)
-        tk.Label(stats, text="ACK_OK").grid(row=2, column=4, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["ack_ok"], width=8, anchor="w").grid(row=2, column=5, padx=6)
-        tk.Label(stats, text="ACK_FAIL").grid(row=2, column=6, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["ack_fail"], width=8, anchor="w").grid(row=2, column=7, padx=6)
+        # Grid of stat labels: label name | value pairs, 4 columns
+        stat_grid = [
+            ("角色", "role"),           ("已发送", "sent"),
+            ("MAC", "mac"),             ("q", "q"),
+            ("时隙(ms)", "slot_ms"),    ("CSMA窗口", "csma_win"),
+            ("时隙上限", "slot_limit"), ("", ""),
+            ("重传总数", "retries_sum"),("单包最大重传", "retries_max"),
+            ("ACK_OK", "ack_ok"),       ("ACK_FAIL", "ack_fail"),
+            ("接收包数", "rx_pkt"),     ("有效帧数", "frame_ok"),
+            ("CRC失败", "crc_fail"),    ("序号丢失", "gap"),
+            ("重复包", "dup"),          ("乱序包", "ooo"),
+        ]
+        for i, (label, var_key) in enumerate(stat_grid):
+            row = i // 2
+            col_base = (i % 2) * 2
+            if label:
+                tk.Label(stats, text=label, fg="#555").grid(row=row, column=col_base, sticky="e", padx=(8, 2), pady=1)
+                tk.Label(stats, textvariable=self.stat_vars[var_key], width=7, anchor="w",
+                         relief="sunken", bg="#fafafa").grid(row=row, column=col_base + 1, padx=(0, 8), pady=1)
 
-        tk.Label(stats, text="接收包数").grid(row=3, column=0, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["rx_pkt"], width=8, anchor="w").grid(row=3, column=1, padx=6)
-        tk.Label(stats, text="有效帧数").grid(row=3, column=2, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["frame_ok"], width=8, anchor="w").grid(row=3, column=3, padx=6)
-        tk.Label(stats, text="CRC失败").grid(row=3, column=4, sticky="w", padx=6, pady=2)
-        tk.Label(stats, textvariable=self.stat_vars["crc_fail"], width=8, anchor="w").grid(row=3, column=5, padx=6)
-        tk.Label(stats, text="序号丢失").grid(row=3, column=6, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["gap"], width=8, anchor="w").grid(row=3, column=7, padx=6)
+        # ============================================================
+        # Row 2: Send statistics detail panel
+        # ============================================================
+        detail = tk.LabelFrame(self.root, text="发送统计详情 (X包任务)")
+        detail.pack(fill=tk.X, padx=8, pady=2)
 
-        tk.Label(stats, text="重复包").grid(row=4, column=0, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["dup"], width=8, anchor="w").grid(row=4, column=1, padx=6)
-        tk.Label(stats, text="乱序包").grid(row=4, column=2, sticky="w", padx=6)
-        tk.Label(stats, textvariable=self.stat_vars["ooo"], width=8, anchor="w").grid(row=4, column=3, padx=6)
+        tk.Label(detail, textvariable=self.xmit_summary, fg="blue", font=("TkDefaultFont", 10, "bold")).pack(
+            anchor="w", padx=6, pady=(4, 0))
 
-        guide = tk.Label(
-            self.root,
-            text="提示：先连接串口，再点“发送突发包”。勾选“自动轮询”可自动刷新统计。",
-            anchor="w",
-            fg="#1f4f8f",
-        )
-        guide.pack(fill=tk.X, padx=12, pady=2)
+        self.stats_text = scrolledtext.ScrolledText(detail, height=5, state="disabled", font=("Courier", 10))
+        self.stats_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(2, 6))
 
+        # ============================================================
+        # Row 3: Log terminal (fills all remaining space)
+        # ============================================================
         log_frame = tk.LabelFrame(self.root, text="日志终端")
-        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
-        self.log = scrolledtext.ScrolledText(log_frame, height=20)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(2, 6))
+
+        self.log = scrolledtext.ScrolledText(log_frame, height=12, font=("Courier", 10))
         self.log.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.log.insert(tk.END, '提示：先连接串口，再点「发送突发包」。勾选「自动轮询」可自动刷新统计。\n')
 
     def _refresh_ports(self) -> None:
         ports = [p.device for p in list_ports.comports()]
@@ -430,6 +432,7 @@ class Nrf24ControllerApp:
         self._log("连接已断开")
 
     def _reader_loop(self) -> None:
+        reconnect_delay_s = 2.0
         while not self.reader_stop.is_set():
             try:
                 if self.conn_type == "SERIAL":
@@ -450,32 +453,111 @@ class Nrf24ControllerApp:
                     stat_line = self._extract_stat_line(text)
                     if stat_line is not None:
                         self.root.after(0, self._update_stats_from_line, stat_line)
-                
-                if "GUI_STAT:" in text:
-                    # 这是统计结果行
-                    self.root.after(0, self._display_slot_stats, text)
-                    continue # 避免被当成普通日志刷屏
 
+                if "GUI_STAT:" in text:
+                    self.root.after(0, self._display_slot_stats, text)
+                    continue
+
+            except serial.SerialException as exc:
+                self.root.after(0, self._log, f"串口错误: {exc}")
+                self.root.after(0, self._log,
+                    "提示: 检查是否有其他程序(如idf.py monitor)正在占用同一串口，或USB线是否松动。")
+                if self.reader_stop.is_set():
+                    break
+                self.root.after(0, self._log, f"将在 {reconnect_delay_s:.0f}s 后重试...")
+                self.reader_stop.wait(timeout=reconnect_delay_s)
+                reconnect_delay_s = min(reconnect_delay_s * 1.5, 15.0)
+            except OSError as exc:
+                self.root.after(0, self._log, f"串口 I/O 错误: {exc}")
+                if self.reader_stop.is_set():
+                    break
+                self.reader_stop.wait(timeout=2.0)
             except Exception as exc:
-                self.root.after(0, self._log, f"Reader error: {exc}")
+                self.root.after(0, self._log, f"Reader 未知错误: {exc}")
                 break
 
 
-    # 然后在类中定义 _display_slot_stats 函数： 用于_reader_loop中处理包含统计信息的日志行。它会解析日志行中的统计数据，并更新UI显示。同时，它还会检测任务完成的标志，以更新摘要信息并停止统计收集。
     def _display_slot_stats(self, log_line):
+        """Parse GUI_STAT: lines from firmware and display structured statistics.
+
+        Two formats are expected:
+          Per-slot:  GUI_STAT: slot=<n> attempted=<0|1> success=<0|1> reason=<code>
+          Summary:   GUI_STAT: Sent <sent>/<target> packets in <N> slots [(timeout)]
+        """
         if not self.is_collecting:
             return
-            
-        # 解析并显示
-        self.stats_text.config(state='normal')
-        self.stats_text.insert(tk.END, log_line + "\n")
-        self.stats_text.see(tk.END) # 滚动到底部
-        self.stats_text.config(state='disabled')
-        
-        # 如果检测到任务结束，更新摘要
-        if "in" in log_line and "slots" in log_line:
-            self.xmit_summary.set(f"任务完成！{log_line}")
+
+        # Try per-slot format
+        slot_match = re.match(
+            r"GUI_STAT:\s+slot=(\d+)\s+attempted=(\d+)\s+success=(\d+)\s+reason=(\d+)",
+            log_line,
+        )
+        if slot_match:
+            record = {
+                "slot": int(slot_match.group(1)),
+                "attempted": int(slot_match.group(2)),
+                "success": int(slot_match.group(3)),
+                "reason": int(slot_match.group(4)),
+            }
+            self.slot_statistics.append(record)
+            self._render_stats_table()
+            return
+
+        # Try summary format
+        summary_match = re.match(
+            r"GUI_STAT:\s+Sent\s+(\d+)/(\d+)\s+packets\sin\s+(\d+)\s+slots",
+            log_line,
+        )
+        if summary_match:
+            sent = summary_match.group(1)
+            target = summary_match.group(2)
+            slot_count = summary_match.group(3)
+            timeout = "timeout" in log_line
+            status = "超时停止" if timeout else "正常完成"
+            self.xmit_summary.set(
+                f"任务{status}：发送 {sent}/{target} 包，耗时 {slot_count} 时隙"
+            )
             self.is_collecting = False
+            self._render_stats_table()
+
+    def _render_stats_table(self):
+        """Render the accumulated slot statistics as a text table."""
+        if not self.slot_statistics:
+            return
+
+        lines = []
+        lines.append(f"{'时隙':>6}  {'尝试?':>6}  {'成功?':>6}  {'原因码':>8}")
+        lines.append("-" * 36)
+
+        reason_names = {
+            0: "跳过/忙",
+            1: "超时MAX_RT",
+            2: "概率拒绝",
+            3: "其他错误",
+        }
+
+        for r in self.slot_statistics:
+            attempted = "是" if r["attempted"] else "否"
+            success = "是" if r["success"] else "否"
+            reason_str = reason_names.get(r["reason"], str(r["reason"]))
+            lines.append(
+                f"{r['slot']:>6}  {attempted:>6}  {success:>6}  {reason_str:>8}"
+            )
+
+        # Summary line
+        total = len(self.slot_statistics)
+        attempted_count = sum(1 for r in self.slot_statistics if r["attempted"])
+        success_count = sum(1 for r in self.slot_statistics if r["success"])
+        lines.append("-" * 36)
+        lines.append(
+            f"合计: {total}时隙  尝试{attempted_count}次  成功{success_count}次"
+        )
+
+        self.stats_text.config(state="normal")
+        self.stats_text.delete(1.0, tk.END)
+        self.stats_text.insert(tk.END, "\n".join(lines))
+        self.stats_text.see(tk.END)
+        self.stats_text.config(state="disabled")
             
     def _socket_read_line(self):
         if self.sock is None:
@@ -665,6 +747,12 @@ class Nrf24ControllerApp:
     def _reset_stats(self) -> None:
         self._send_line("RESETSTATS")
 
+    def _jam_on(self) -> None:
+        self._send_line("JAM ON")
+
+    def _jam_off(self) -> None:
+        self._send_line("JAM OFF")
+
     def _parse_schedule_datetime(self, text: str):
         text = text.strip()
         now = datetime.now()
@@ -726,18 +814,19 @@ class Nrf24ControllerApp:
             "5. 查询状态: 主动发送 STATUS，刷新 ACK/RX 统计。\n"
             "6. 重置统计: 发送 RESETSTATS，清零统计计数。\n"
             "7. 自动轮询: 每秒自动查询 STATUS，不会自动发送业务载荷。\n"
-            "8. MAC 设置: 选择 ALOHA/CSMA 和 q，再点“应用MAC设置”。\n\n"
-            "9. 时隙设置: 配置时隙长度与 CSMA 窗口，再点“应用时隙设置”。\n"
-            "10. 时隙上限: 设置发送任务最多运行 T 个时隙，超过后自动停止。\n\n"
+            "8. MAC 设置: 选择 ALOHA/CSMA 和 q，再点「应用MAC设置」。\n\n"
+            "9. 时隙设置: 配置时隙长度与 CSMA 窗口，再点「应用时隙设置」。\n"
+            "10. 时隙上限: 设置发送任务最多运行 T 个时隙，超过后自动停止。\n"
+            "11. JAM 干扰: JAM ON 开启持续载波发射（无ACK），JAM OFF 关闭。用于测试信道干扰场景。\n\n"
             "无线连接\n"
             "- 设备会开启 SoftAP，默认 SSID 为 NRF24_CTRL。\n"
             "- 无线模式下先自动发送 AUTH token，再执行命令。\n"
             "- 默认主机地址是 192.168.4.1，端口是 3333。\n\n"
             "定时发送\n"
-            "- 在“开始时间”输入 HH:MM 或 HH:MM:SS，例如 11:05 或 11:05:00。\n"
-            "- 点击“定时发送突发包”后，到点会自动执行一次“发送突发包”。\n"
+            "- 在「开始时间」输入 HH:MM 或 HH:MM:SS，例如 11:05 或 11:05:00。\n"
+            "- 点击「定时发送突发包」后，到点会自动执行一次「发送突发包」。\n"
             "- 若该时间今天已过，会自动安排到明天同一时间。\n"
-            "- 可用“取消定时”取消未触发的任务。\n\n"
+            "- 可用「取消定时」取消未触发的任务。\n\n"
             "模式说明\n"
             "- ASCII: 按文本发送，如 HELLO。\n"
             "- HEX: 按十六进制发送，如 101010 或 A1B2C3（必须偶数位）。\n\n"

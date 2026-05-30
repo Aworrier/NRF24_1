@@ -1,5 +1,7 @@
 # 上位机GUI工作流程（TX突发任务 -> RX统计）
 
+> 文件创建日期: 2026-05-30
+> 最后修订: 2026-05-30
 English summary: the GUI sends BURST/BURSTHEX over UART/TCP, TX builds frames and sends, RX validates and updates STAT counters.
 英文摘要：GUI 通过 UART/TCP 发送 BURST/BURSTHEX，TX 构帧发送，RX 校验并更新 STAT 统计。
 
@@ -56,11 +58,82 @@ English summary: the GUI sends BURST/BURSTHEX over UART/TCP, TX builds frames an
 ## 6. GUI统计展示与任务完成
 
 1. GUI读取串口/TCP日志并解析STAT行，刷新ACK与RX面板。
-2. 若日志包含GUI_STAT行，GUI将其写入“发送统计详情”面板。
-3. 检测到任务完成标记后，GUI更新摘要并停止统计收集。
+2. 若日志包含 GUI_STAT 行，GUI解析结构化数据：
+   - 每时隙格式: `GUI_STAT: slot=<n> attempted=<0|1> success=<0|1> reason=<code>`
+   - 汇总格式: `GUI_STAT: Sent <sent>/<target> packets in <N> slots [(timeout)]`
+3. 解析后的数据以表格形式渲染在「发送统计详情」面板（时隙号/尝试/成功/原因码），底部带合计行。
+4. 原因码说明: 0=跳过/忙, 1=超时MAX_RT, 2=概率拒绝, 3=其他错误。
+5. 检测到汇总行后，GUI更新摘要标签并停止统计收集。
 
-## 7. 终止与复查
+## 7. JAM 干扰信号
 
-- 点击“停止发送”可中止当前burst（发送 STOP）。
-- 可再次点击“查询状态”确认统计。
-- 可“重置统计”后重新发起任务，确保数据干净。
+JAM (Jammer) 是 TX 端的持续载波发射功能，用于产生信道干扰以验证 CSMA/RPD 的抗干扰能力。
+
+### 7.1 工作原理
+
+- JAM ON 时，固件启动独立 FreeRTOS 任务 `nrf24_jam`（优先级 10，高于 TX 任务的优先级 8）。
+- 该任务紧循环发送满载 32 字节 0xFF 的无线帧，**禁用 Auto-ACK** 以最大化发送速率。
+- 新旧 jammer 对比：
+
+| 项目 | 旧实现 (v1) | 新实现 (v2) |
+|------|------------|------------|
+| 包间延迟 | ~5ms（每轮 power_up 2ms + stop_listening 1ms） | ~10µs（仅 CE 脉冲间隙） |
+| 占空比 | ~4%（200µs 发送 / 5ms 间隔） | ~95%+ |
+| TX 任务干扰 | CSMA idle poll 每 50ms 打断 NRF24 状态 | Jammer 期间自动跳过 CSMA idle poll |
+| 总包数 | 未统计 | 停止时输出总发包数 |
+
+### 7.2 操作步骤
+
+1. **TX 端**：GUI 连接 TX 板，确保 MAC 模式设为 CSMA（非必须但推荐）。
+2. 点击 **JAM ON** → 日志终端显示 `=> JAM ON`，固件回复 `OK JAM ON (continuous TX, no ACK)`。
+3. 固件日志输出 `Jammer started` 确认 jammer 任务已启动。
+4. **另一对 TX/RX** 正常进行 burst 测试，观察 ACK_OK/ACK_FAIL 变化。
+5. 点击 **JAM OFF** → 固件回复 `Jammer stopped (N packets sent)` 并输出发包总数。
+6. **GUI 的「停止发送」按钮也可终止 jammer**（固件 STOP 命令同时停止 burst 和 jammer）。
+
+### 7.3 验证干扰效果
+
+- 在 TX 端启用 JAM ON 后，RX 端所在的 TX 板（如果开启了 CSMA 模式）会在串口日志中看到：
+  ```
+  CSMA idle poll: RPD=1 (CHANNEL BUSY)
+  ```
+- **注意**: Jammer 运行时 TX 任务的 CSMA idle poll 自动暂停（v2 新增），因此 JAM ON 时 TX 板不会再刷 CHANNEL BUSY 日志。
+- 要通过 RPD 验证干扰效果，需**在被干扰的RX端板子**上开启 CSMA 模式查看其日志。
+- 观察被干扰的 TX/RX 对的 `ACK_FAIL` 和 `retries_sum` 是否上升，从而量化干扰强度。
+
+### 7.4 注意事项
+
+- **JAM 和 burst 共享同一 NRF24 硬件**，JAM ON 时无法同时执行 burst 发送。
+- Jammer 发包极快（~5000 pkt/s），长时间运行注意 NRF24 芯片温度。
+- Jammer 优先级 10，高于 TX 任务（8），但每 1000 包会 `taskYIELD` 1 tick 防止看门狗复位和低优先级任务饿死。
+- **典型测试流程**:
+  ```
+  [干扰 TX 板]  JAM ON
+  [被测 TX 板]  MAC CSMA 100
+  [被测 TX 板]  BURST 100 0 HELLO
+  [被测 RX 板]  观察 STAT → ack_fail 应显著上升
+  [干扰 TX 板]  JAM OFF
+  [被测 TX 板]  BURST 100 0 HELLO  (对比测试：无干扰)
+  [被测 RX 板]  观察 STAT → ack_fail 应恢复正常
+  ```
+
+## 8. 终止与复查
+
+- 点击「停止发送」可中止当前burst和JAM（发送 STOP）。
+- 可再次点击「查询状态」确认统计。
+- 可「重置统计」后重新发起任务，确保数据干净。
+
+## 9. 常见问题
+
+- **串口错误 "device reports readiness to read but returned no data"**: 通常是其他程序（如 `idf.py monitor`）同时占用了同一串口。GUI reader 线程会捕获此异常，显示中文提示并自动重试（退避 2s→15s），不会崩溃。关闭其他占用串口的程序即可恢复。
+- **JAM ON 后 RPD 很快变回 0**: 检查是否在被干扰的板子上而非干扰源板子上查看 CSMA 日志。JAM v2 运行时 TX 板自身的 CSMA idle poll 已自动暂停。
+
+## 8. 终止与复查
+
+- 点击「停止发送」可中止当前burst和JAM（发送 STOP）。
+- 可再次点击「查询状态」确认统计。
+- 可「重置统计」后重新发起任务，确保数据干净。
+
+## 9. 常见问题
+
+- **串口错误 "device reports readiness to read but returned no data"**: 通常是其他程序（如 `idf.py monitor`）同时占用了同一串口。GUI reader 线程会捕获此异常，显示中文提示并自动重试（退避 2s→15s），不会崩溃。关闭其他占用串口的程序即可恢复。

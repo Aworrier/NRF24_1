@@ -1,12 +1,16 @@
 # Code Deep Dive / 代码深度解析
 
+> 文件创建日期: 2026-05-30
+> 最后修订: 2026-05-30
+> 适用项目: NRF24_1 (ESP32-S3 + NRF24L01+)
+
 > Function-level intent with surface behavior and deeper reasons.
-> 以“函数级”为单位解释表象行为与深层原因。
+> 以”函数级”为单位解释表象行为与深层原因。
 
 ## How to read / 阅读方式
 
-- English: Each function lists Surface (what it does) and Deeper (why it exists). See [docs/C_LANGUAGE_PRIMER.md](C_LANGUAGE_PRIMER.md) for C/RTOS concepts.
-- 中文：每个函数包含“表象”和“深层原因”。C/RTOS 基础请先读 [docs/C_LANGUAGE_PRIMER.md](C_LANGUAGE_PRIMER.md)。
+- English: Each function lists Surface (what it does) and Deeper (why it exists). See [C Language Primer Series](README.md#c-language-primer--c-语言基础系列) for C/RTOS concepts.
+- 中文：每个函数包含”表象”和”深层原因”。C/RTOS 基础请先读 [C Primer 系列](README.md#c-language-primer--c-语言基础系列)。
 
 ---
 

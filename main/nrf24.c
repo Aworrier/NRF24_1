@@ -124,6 +124,14 @@ static inline void nrf24_set_ce(int level)
     gpio_set_level(s_nrf24.cfg.pin_ce, level);
 }
 
+/* 公开的 CE 脉冲：拉高 ≥10µs 后拉低，触发一次 PTX 发射。 */
+void nrf24_pulse_ce(void)
+{
+    nrf24_set_ce(1);
+    esp_rom_delay_us(15);
+    nrf24_set_ce(0);
+}
+
 /*
  * IRQ ISR：只做一件事，把事件投递到队列。
  * 原则：ISR 内部不要做重逻辑，真实处理放到任务上下文。
@@ -217,7 +225,7 @@ static esp_err_t nrf24_write_buf_reg(uint8_t reg, const uint8_t *buf, size_t len
 
 /* 装载 TX payload，支持 no_ack 命令变体。 */
 /* Load TX payload (optionally no-ack). */
-static esp_err_t nrf24_write_payload(const uint8_t *data, size_t len, bool no_ack)
+esp_err_t nrf24_write_payload(const uint8_t *data, size_t len, bool no_ack)
 {
     ESP_RETURN_ON_FALSE(len <= 32, ESP_ERR_INVALID_ARG, TAG, "invalid payload len");
 
@@ -520,6 +528,12 @@ esp_err_t nrf24_enable_rx_pipes(uint8_t mask)
 esp_err_t nrf24_set_auto_ack_mask(uint8_t mask)
 {
     return nrf24_write_register(NRF24_REG_EN_AA, (uint8_t)(mask & 0x3F), NULL);
+}
+
+esp_err_t nrf24_get_auto_ack_mask(uint8_t *mask)
+{
+    ESP_RETURN_ON_FALSE(mask != NULL, ESP_ERR_INVALID_ARG, TAG, "null mask");
+    return nrf24_read_register(NRF24_REG_EN_AA, mask, NULL);
 }
 
 /* 配置自动重发延迟和次数。 */

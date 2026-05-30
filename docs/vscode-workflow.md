@@ -1,6 +1,9 @@
 # VS Code + ESP-IDF Workflow / 开发流程
 
-> 适用平台：Windows / Linux / WSL2
+> 文件创建日期: 2026-05-30
+> 最后修订: 2026-05-30
+> 适用项目: NRF24_1 (ESP32-S3 + NRF24L01+)
+> 适用平台: Windows / Linux / WSL2
 
 ## TL;DR / 速读
 
@@ -52,7 +55,9 @@ Linux/WSL 用户注意：USB 串口设备通常为 `/dev/ttyUSB0` 或 `/dev/ttyA
 
 ---
 
-## 3. Windows 驱动怎么装
+## 3. 驱动怎么装
+
+### Windows
 
 ESP32 板子常见 USB 转串口芯片对应驱动如下：
 
@@ -80,12 +85,26 @@ ESP32 板子常见 USB 转串口芯片对应驱动如下：
 - 找不到串口
 - 烧录时报 `port not found` / `permission denied`
 
-### 3.2 常见补充
+### 3.3 常见补充
 
 - 更换 USB 口（优先主板后置口）
 - 更换数据线
 - 关闭占用串口的软件
 - 安装驱动后重新插拔板子
+
+### 3.4 Linux / WSL2
+
+Linux 内核已内置 CP210x/CH34x/FT232 驱动，通常无需额外安装。
+
+- 接上板子后执行 `ls /dev/ttyUSB* /dev/ttyACM*` 确认设备出现
+- 若提示权限不足：`sudo usermod -a -G dialout $USER` 后注销重新登录
+- WSL2 需通过 `usbipd` 将 Windows USB 设备映射到 WSL：
+  ```powershell
+  # Windows PowerShell（管理员）
+  usbipd wsl list
+  usbipd wsl attach --busid <BUSID>
+  ```
+- 更多 WSL USB 直通细节参考 Microsoft 官方文档 `connect-usb-devices`
 
 ---
 
