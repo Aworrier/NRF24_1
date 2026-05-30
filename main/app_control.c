@@ -8,6 +8,7 @@
 
 #include "app_stats.h"
 #include "app_tx.h"
+#include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
 

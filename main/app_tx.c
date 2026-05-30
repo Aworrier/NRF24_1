@@ -8,6 +8,7 @@
 #include "app_stats.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"

@@ -2,7 +2,6 @@
   "configurations": [
     {
       "name": "ESP-IDF",
-      "compilerPath": "C:\\Espressif\\tools\\xtensa-esp-elf\\esp-15.2.0_20251204\\xtensa-esp-elf\\bin\\xtensa-esp32-elf-gcc.exe",
       "compileCommands": "${config:idf.buildPath}/compile_commands.json",
       "includePath": [
         "${workspaceFolder}/**"
@@ -12,7 +11,8 @@
           "${workspaceFolder}"
         ],
         "limitSymbolsToIncludedHeaders": true
-      }
+      },
+      "compilerPath": "/home/dell/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp32s3-elf-gcc"
     }
   ],
   "version": 4
