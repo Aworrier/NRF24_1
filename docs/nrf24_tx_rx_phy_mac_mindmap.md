@@ -17,7 +17,7 @@ English summary: TX/RX flows are now split across `app_tx.c`, `app_rx.c`, `app_p
   - 负责信道、速率、功率、地址宽度、CRC、CE 时序
   - 文件：main/nrf24.c
 
-注意：当前实现是“固定信道 + auto-ack + auto-retry”，不是完整 CSMA/CA。
+注意：当前实现支持 ALOHA 和 CSMA 两种 MAC 模式，CSMA 基于 RPD 载波侦听 + 随机退避。
 
 ---
 
@@ -171,12 +171,16 @@ mindmap
 - 观察指标
   - 同样发送次数下，ack_fail 与 seq_gap 的变化
 
-### 5.3 “监听信道”实验（非标准 CSMA）
+### 5.3 CSMA 载波侦听实验
 
-- 修改位置
-  - main/nrf24.c 的 nrf24_send_payload
-- 实验逻辑
-  - 发送前读 RPD
-  - 若 RPD=1（疑似忙）则随机退避 N ms 后重试
-- 验证方法
-  - 在同信道增加干扰源，对比添加前后的 ack_fail 与 retries_sum
+CSMA 模式已内置在 `app_tx_gate_decide()`（`main/app_tx.c`），无需修改驱动。
+
+- 启用方式
+  - UART/TCP 发送：`MAC CSMA <q>`（q 为通过概率后继续发送的百分比）
+  - 发送前自动调用 `nrf24_carrier_sense()` 读取 RPD
+  - 若 RPD=1（信道忙）则随机退避若干时隙后重试
+- 实验思路
+  - 对比 `MAC ALOHA 100` 与 `MAC CSMA 100` 在相同干扰条件下的 ack_fail / retries_sum
+  - 调整 `SLOT <slot_us> <csma_window>` 观察退避窗口对成功率的影响
+- 进阶实验
+  - 在同信道增加干扰源（如另一对 NRF24 或 WiFi），对比 ALOHA vs CSMA 的抗干扰能力

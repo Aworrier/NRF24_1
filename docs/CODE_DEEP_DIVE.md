@@ -5,12 +5,12 @@
 
 ## How to read / 阅读方式
 
-- English: Each function lists Surface (what it does) and Deeper (why it exists). See [docs/C_LANGUAGE_PRIMER.md](docs/C_LANGUAGE_PRIMER.md) for C/RTOS concepts.
-- 中文：每个函数包含“表象”和“深层原因”。C/RTOS 基础请先读 [docs/C_LANGUAGE_PRIMER.md](docs/C_LANGUAGE_PRIMER.md)。
+- English: Each function lists Surface (what it does) and Deeper (why it exists). See [docs/C_LANGUAGE_PRIMER.md](C_LANGUAGE_PRIMER.md) for C/RTOS concepts.
+- 中文：每个函数包含“表象”和“深层原因”。C/RTOS 基础请先读 [docs/C_LANGUAGE_PRIMER.md](C_LANGUAGE_PRIMER.md)。
 
 ---
 
-## [main/app_main.c](main/app_main.c)
+## [main/app_main.c](../main/app_main.c)
 
 ### `app_main`
 - Surface / 表象：构建配置，初始化 NRF24 驱动，启动串口控制、Wi-Fi 控制、RX/TX 任务。
@@ -19,7 +19,7 @@
 
 ---
 
-## [main/app_config.c](main/app_config.c)
+## [main/app_config.c](../main/app_config.c)
 
 ### `app_role_name`
 - Surface / 表象：返回当前角色字符串 TX/RX。
@@ -53,7 +53,7 @@
 
 ---
 
-## [main/app_proto.c](main/app_proto.c)
+## [main/app_proto.c](../main/app_proto.c)
 
 ### `app_crc16_ccitt` (static)
 - Surface / 表象：计算 CRC16-CCITT 校验。
@@ -74,7 +74,7 @@
 
 ---
 
-## [main/app_stats.c](main/app_stats.c)
+## [main/app_stats.c](../main/app_stats.c)
 
 ### `app_stats_reset`
 - Surface / 表象：清空 TX/RX 统计。
@@ -98,7 +98,7 @@
 
 ---
 
-## [main/app_tx.c](main/app_tx.c)
+## [main/app_tx.c](../main/app_tx.c)
 
 ### `app_tx_init`
 - Surface / 表象：创建 TX 命令队列并启动 TX 任务。
@@ -133,7 +133,7 @@
 
 ---
 
-## [main/app_rx.c](main/app_rx.c)
+## [main/app_rx.c](../main/app_rx.c)
 
 ### `app_rx_start`
 - Surface / 表象：创建 IRQ 队列和 RX 队列，启动 IRQ 与消费任务。
@@ -150,7 +150,7 @@
 
 ---
 
-## [main/app_control.c](main/app_control.c)
+## [main/app_control.c](../main/app_control.c)
 
 ### `app_control_start_uart`
 - Surface / 表象：启动 UART 命令读取任务。
@@ -168,7 +168,7 @@
 
 ---
 
-## [main/app_wifi_control.c](main/app_wifi_control.c)
+## [main/app_wifi_control.c](../main/app_wifi_control.c)
 
 ### `app_wifi_control_start`
 - Surface / 表象：启动 SoftAP 与 TCP 控制任务。
@@ -185,7 +185,7 @@
 
 ---
 
-## [main/nrf24.h](main/nrf24.h)
+## [main/nrf24.h](../main/nrf24.h)
 
 ### Public API groups / 公共 API 分组
 - Init and power: `nrf24_init`, `nrf24_deinit`, `nrf24_power_up`, `nrf24_power_down`
@@ -199,7 +199,7 @@ Deeper / 深层：稳定的 API 让应用层不直接触碰寄存器细节。
 
 ---
 
-## [main/nrf24.c](main/nrf24.c)
+## [main/nrf24.c](../main/nrf24.c)
 
 ### SPI primitives / SPI 原语
 - `nrf24_spi_transfer`, `nrf24_cmd`, `nrf24_write_register`, `nrf24_read_register`, `nrf24_write_buf_reg`, `nrf24_write_payload`, `nrf24_read_payload`

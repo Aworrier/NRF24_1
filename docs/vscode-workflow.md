@@ -1,4 +1,6 @@
-# VS Code + ESP-IDF Workflow (Windows) / 开发流程（Windows）
+# VS Code + ESP-IDF Workflow / 开发流程
+
+> 适用平台：Windows / Linux / WSL2
 
 ## TL;DR / 速读
 
@@ -17,11 +19,12 @@
 
 ## 1. 先准备什么
 
-- Windows 10/11
+- Windows 10/11 或 Linux（含 WSL2）
 - 一根稳定的 USB 数据线（不是仅充电线）
 - 一块 ESP32 开发板（本仓库常用 ESP32-S3）
 - VS Code
 
+Linux/WSL 用户注意：USB 串口设备通常为 `/dev/ttyUSB0` 或 `/dev/ttyACM0`，可能需要 `sudo usermod -a -G dialout $USER` 添加串口权限。
 建议先关闭各种串口占用软件（串口助手、上位机、其他 monitor），避免端口被占用。
 
 ---
