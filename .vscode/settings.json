@@ -1,14 +1,32 @@
 {
-  "idf.currentSetup": "/home/dell/.espressif/v6.0.1/esp-idf",
-  "idf.espIdfPath": "/home/dell/.espressif/v6.0.1/esp-idf",
-  "idf.toolsPath": "/home/dell/.espressif/tools",
-  "idf.pythonInstallPath": "/home/dell/.espressif/tools/python/v6.0.1/venv/bin/python3",
-  "idf.customExtraVars": {
-    "IDF_TARGET": "esp32s3"
-  },
-  "idf.gitPath": "/usr/bin/git",
-  "idf.flashType": "UART",
-  "idf.openOcdConfigs": [
-    "board/esp32s3-builtin.cfg"
-  ]
+    // ========================================
+    // ESP-IDF 终端环境 (手动激活)
+    // 需要时在终端执行: source env.sh
+    // ========================================
+    "terminal.integrated.env.linux": {
+        "IDF_PATH": "/home/dell/.espressif/v6.0.1/esp-idf",
+        "IDF_TOOLS_PATH": "/home/dell/.espressif/tools",
+        "IDF_PYTHON_ENV_PATH": "/home/dell/.espressif/tools/python/v6.0.1/venv",
+        "ESP_IDF_VERSION": "6.0"
+    },
+
+    // ========================================
+    // ESP-IDF 扩展 v2.1.0 配置
+    // 扩展通过 EIM (ESP-IDF Installation Manager) 管理安装
+    // ========================================
+    "idf.eimIdfJsonPath": "/home/dell/.espressif/tools/eim_idf.json",
+    "idf.gitPath": "/usr/bin/git",
+    "idf.port": "/dev/ttyUSB0",
+    "idf.flashType": "UART",
+
+    // ========================================
+    // C/C++ IntelliSense 配置
+    // ========================================
+    "C_Cpp.intelliSenseEngine": "default",
+    "files.associations": {
+        "*.h": "c",
+        "*.c": "c",
+        "sdkconfig": "properties"
+    },
+    "idf.currentSetup": "/home/dell/.espressif/v6.0.1/esp-idf"
 }

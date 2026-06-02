@@ -124,8 +124,8 @@ static volatile bool s_tx_abort = false;
  */
 static app_mac_mode_t s_mac_mode            = APP_MAC_ALOHA;
 static uint8_t       s_mac_q_percent        = 100;
-static uint32_t      s_slot_ms              = 20;
-static uint32_t      s_csma_window_slots    = 1;
+static uint32_t      s_slot_ms              = 2;
+static uint32_t      s_csma_window_slots    = 4;
 static uint32_t      s_task_slot_limit      = 0;
 static uint64_t      s_slot_seq             = 0;
 static uint64_t      s_csma_grant_until     = 0;
@@ -391,9 +391,9 @@ static app_tx_gate_result_t app_tx_gate_decide(bool *prob_ok, bool *rpd_out, uin
             return APP_TX_GATE_BACKOFF;
         }
 
-        /* 执行载波侦听（200us 侦听窗口） */
+        /* 执行载波侦听（1500us 侦听窗口，覆盖完整数据包） */
         bool rpd = false;
-        if (nrf24_carrier_sense(200, &rpd) == ESP_OK) {
+        if (nrf24_carrier_sense(1500, &rpd) == ESP_OK) {
             if (rpd_out != NULL) {
                 *rpd_out = rpd;    /* 传出 RPD 原始结果供上层日志使用 */
             }
@@ -894,6 +894,7 @@ static void app_tx_jammer_task(void *arg)
 
     ESP_LOGI(TAG, "Jammer started (no ACK, 32B payload, max rate)");
 
+    app_tx_stats_t *stats = app_stats_tx();
     uint32_t pkt_count = 0;
     while (s_jam_active) {
         /*
@@ -930,10 +931,16 @@ static void app_tx_jammer_task(void *arg)
 
         /* 每 1000 包喂狗 + 让出 CPU 1 tick（确保低优先级任务不被饿死） */
         if (++pkt_count % 1000 == 0) {
+            stats->frame_sent += 1000;
             vTaskDelay(1);
         }
     }
 
+    /* 补齐不足 1000 的尾数帧统计 */
+    uint32_t remainder = pkt_count % 1000;
+    if (remainder > 0) {
+        stats->frame_sent += remainder;
+    }
     /* 恢复 auto-ack 配置并断电 */
     nrf24_set_auto_ack_mask(saved_aa_mask);
     nrf24_power_down();
