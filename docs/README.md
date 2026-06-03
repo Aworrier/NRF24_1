@@ -10,7 +10,7 @@
 ## Start Here / 新手入口
 
 - [START_HERE.md](START_HERE.md): 10-minute path and first success checklist
-- [quickstart.md](quickstart.md): minimal TX/RX bring-up steps
+- [quickstart.md](quickstart.md): 构建与烧录完全指南（5 种方法，新手首选）
 - [vscode-workflow.md](vscode-workflow.md): VS Code + ESP-IDF setup and commands
 
 ## Learn the Code / 读代码

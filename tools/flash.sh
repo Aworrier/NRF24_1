@@ -16,7 +16,22 @@ cd "$PROJECT_DIR"
 
 # ── 激活 ESP-IDF ──
 echo "==> 激活 ESP-IDF 环境..."
-source /home/dell/.espressif/tools/activate_idf_v6.0.1.sh
+
+# activate_idf_v6.0.1.sh 的 is_sourced() 通过 $0 判来源/执行。
+# 本脚本被 /bin/bash 直接运行时 $0 是 flash.sh，不匹配 bash/dash/sh/ksh，
+# 会导致误报 "should be sourced"。因此不走 source，改用 -e 导出环境
+# 变量，再手动补齐 shell 函数。
+while IFS='=' read -r k v; do
+    [ -n "$k" ] && export "$k"="$v"
+done < <(/bin/bash /home/dell/.espressif/tools/activate_idf_v6.0.1.sh -e 2>/dev/null)
+
+# idf.py / esptool.py 等原本是 shell 函数，在此补齐最常用的
+idf.py() {
+    "$IDF_PYTHON_ENV_PATH/bin/python" "$IDF_PATH/tools/idf.py" "$@"
+}
+esptool() {
+    "$IDF_PYTHON_ENV_PATH/bin/python" -m esptool "$@"
+}
 
 # ── 解析参数: -p 指定串口 ──
 MODE="flash"
@@ -36,8 +51,10 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# ── 确定串口 ──
-if [ -n "$USER_PORT" ]; then
+# ── 确定串口（build 模式不需要串口）──
+if [ "$MODE" = "build" ]; then
+    PORT=""  # build only, no serial needed
+elif [ -n "$USER_PORT" ]; then
     PORT="$USER_PORT"
     echo "==> 使用指定串口: $PORT"
 elif [ -n "$ESPPORT" ] && [ -e "$ESPPORT" ]; then
@@ -81,8 +98,10 @@ else
     export ESPPORT="$PORT"
 fi
 
-echo "==> 串口: $PORT"
-echo ""
+if [ "$MODE" != "build" ]; then
+    echo "==> 串口: $PORT"
+    echo ""
+fi
 
 # ── 执行 ──
 case "$MODE" in
