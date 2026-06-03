@@ -93,19 +93,19 @@ typedef struct {
     uint8_t data[32];
 } nrf24_rx_payload_t;
 
-/* Step 1: lifecycle */
+/* 第1步：生命周期 / Step 1: lifecycle */
 /* 初始化驱动、配置 SPI 和基础寄存器。重复调用是安全的。 */
 esp_err_t nrf24_init(const nrf24_config_t *cfg);
 /* 释放中断和 SPI 资源。 */
 void nrf24_deinit(void);
 
-/* Step 2: power state */
+/* 第2步：电源状态 / Step 2: power state */
 /* 进入上电状态（PWR_UP=1），并按配置启用 CRC。 */
 esp_err_t nrf24_power_up(void);
 /* 进入省电状态（PWR_UP=0），同时拉低 CE。 */
 esp_err_t nrf24_power_down(void);
 
-/* Step 3: radio address and payload settings */
+/* 第3步：空口地址与载荷设置 / Step 3: radio address and payload settings */
 /* 设置 TX 地址，长度必须与 address_width 一致。 */
 esp_err_t nrf24_set_tx_address(const uint8_t *addr, size_t len);
 /* 设置 RX 地址。pipe0/1 需要完整地址，pipe2-5 只需最低字节。 */
@@ -118,7 +118,7 @@ esp_err_t nrf24_enable_rx_pipes(uint8_t mask);
 esp_err_t nrf24_set_auto_ack_mask(uint8_t mask);
 esp_err_t nrf24_get_auto_ack_mask(uint8_t *mask);
 
-/* Step 4: TX/RX runtime mode */
+/* 第4步：TX/RX 运行模式 / Step 4: TX/RX runtime mode */
 /* 配置自动重发延迟和次数。 */
 esp_err_t nrf24_config_retransmit(uint16_t delay_us, uint8_t count);
 /* 进入 RX 监听模式（PRIM_RX=1，CE=1）。 */
@@ -126,7 +126,7 @@ esp_err_t nrf24_start_listening(void);
 /* 退出 RX 监听模式（PRIM_RX=0，CE=0）。 */
 esp_err_t nrf24_stop_listening(void);
 
-/* Step 5: data path */
+/* 第5步：数据通路 / Step 5: data path */
 /* 发送一帧载荷并在 wait_ticks 时间内等待结果。 */
 esp_err_t nrf24_send_payload(const uint8_t *data, size_t len, TickType_t wait_ticks);
 /* 向 TX FIFO 写入载荷（不触发发送，需配合 CE 脉冲使用）。 */
@@ -136,7 +136,7 @@ void nrf24_pulse_ce(void);
 /* 从 RX FIFO 取一帧数据；若无数据返回 ESP_ERR_NOT_FOUND。 */
 esp_err_t nrf24_read_rx_payload(nrf24_rx_payload_t *payload);
 
-/* Step 6: status and maintenance */
+/* 第6步：状态与维护 / Step 6: status and maintenance */
 /* 清除 RX_DR/TX_DS/MAX_RT 中断标志。 */
 esp_err_t nrf24_clear_irq_flags(void);
 /* 读取并解析 IRQ 状态。 */
@@ -156,7 +156,7 @@ esp_err_t nrf24_read_rpd(bool *busy);
 /* 进行一次载波侦听：临时切到 RX、等待一小段时间、读取 RPD。 */
 esp_err_t nrf24_carrier_sense(uint16_t listen_us, bool *busy);
 
-/* Optional: IRQ queue helper for task-based application design */
+/* 可选：IRQ 队列辅助接口（面向任务架构） / Optional: IRQ queue helper for task-based application design */
 /* 安装 IRQ 回调并把事件投递到 queue。 */
 esp_err_t nrf24_irq_queue_install(QueueHandle_t queue);
 /* 移除 IRQ 回调并清理 ISR 服务。 */

@@ -288,20 +288,20 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
         return;
     }
 
-    /* 命令: STATUS — 查询运行统计 */
+    /* 查询运行统计 */
     if (strcmp(cmd, "STATUS") == 0) {
         app_reply_stats(io);
         return;
     }
 
-    /* 命令: RESETSTATS — 重置统计计数器 */
+    /* 重置统计计数器 */
     if (strcmp(cmd, "RESETSTATS") == 0) {
         app_stats_reset();
         app_control_reply(io, "OK RESET");
         return;
     }
 
-    /* 命令: HELP — 打印命令列表 */
+    /* 打印命令列表 */
     if (strcmp(cmd, "HELP") == 0) {
 #if defined(CONFIG_NRF24_ROLE_TX)
         app_control_reply(io,
@@ -326,7 +326,7 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
      * RX 角色在此处收到未知命令后会走到末尾的 "ERR unknown command"。
      */
 #if defined(CONFIG_NRF24_ROLE_TX)
-    /* 命令: ENABLE <0|1> — 启用或禁用 TX 发送 */
+    /* 启用或禁用 TX 发送。参数：0 禁用，1 启用。 */
     if (strncmp(cmd, "ENABLE", 6) == 0) {
         char *p = cmd + 6;
         uint32_t enabled = 0;
@@ -339,7 +339,7 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
         return;
     }
 
-    /* 命令: MAC [ALOHA|CSMA] <q_percent> — 配置 MAC 协议和概率门限 */
+    /* 配置 MAC 协议和概率门限。参数：ALOHA 或 CSMA，可选 q 百分比(0-100)。 */
     if (strncmp(cmd, "MAC", 3) == 0) {
         char *p = app_trim_left(cmd + 3);
 
@@ -395,7 +395,7 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
         return;
     }
 
-    /* 命令: SLOTLIMIT <max_slots> — 设置/查询发送总时隙上限 */
+    /* 设置/查询发送总时隙上限。无参数时查询当前值。 */
     if (strncmp(cmd, "SLOTLIMIT", 9) == 0) {
         char *p = app_trim_left(cmd + 9);
         if (*p == '\0') {
@@ -414,7 +414,7 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
         return;
     }
 
-    /* 命令: SLOT <slot_ms> <csma_window> — 设置/查询时隙参数 */
+    /* 设置/查询时隙参数。slot_ms 时隙毫秒数，csma_window 载波侦听窗口。 */
     if (strncmp(cmd, "SLOT", 4) == 0) {
         char *p = app_trim_left(cmd + 4);
         if (*p == '\0') {
@@ -442,7 +442,7 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
         return;
     }
 
-    /* 命令: STOP — 立即中止当前 burst 发送 */
+    /* 立即中止当前 burst 发送和信号发生器。 */
     if (strcmp(cmd, "STOP") == 0) {
         app_tx_abort();
         app_tx_jam_stop();  /* 同时停止信号发生器 */
@@ -450,7 +450,7 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
         return;
     }
 
-    /* 命令: JAM ON|OFF — 信号发生器控制（产生信道干扰） */
+    /* 信号发生器控制（产生信道干扰）。参数：ON 开启，OFF 关闭。 */
     if (strncmp(cmd, "JAM", 3) == 0) {
         char *p = cmd + 3;
         p = app_trim_left(p);
@@ -467,14 +467,13 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
     }
 
     /*
-     * 命令: BURST / BURSTHEX — 提交批量发送任务
+     * BURST/BURSTHEX 格式：
+     *   BURST    <count> <interval_ms> <ascii_payload>
+     *   BURSTHEX <count> <interval_ms> <hex_payload>
      *
-     * BURST    <count> <interval_ms> <ascii_payload>
-     * BURSTHEX <count> <interval_ms> <hex_payload>
-     *
-     * count:       帧数（发送多少帧）。
-     * interval_ms: 帧间间隔（毫秒），在第一帧发出后开始计时。
-     * payload:     载荷数据，BURST 是 ASCII 文本，BURSTHEX 是十六进制。
+     * count        帧数
+     * interval_ms  帧间间隔（毫秒）
+     * payload      载荷数据（ASCII 或十六进制）
      */
     bool is_hex = false;
     if (strncmp(cmd, "BURSTHEX", 8) == 0) {

@@ -37,8 +37,8 @@
 #define NRF24_CMD_NOP               0xFF
 
 /* 常用寄存器地址定义。
- * 备注：RPD 可用于“是否检测到较强信号”的粗略判断（非完整 CSMA/CCA）。
- * 本驱动目前没有在发送前读取 RPD，因此发送路径不是 LBT/CSMA 流程。
+ * 备注：RPD 可用于”是否检测到较强信号”的粗略判断。
+ * 驱动层不读取 RPD；CSMA/LBT 载波侦听由应用层调用 nrf24_carrier_sense() 实现。
  */
 #define NRF24_REG_CONFIG            0x00
 #define NRF24_REG_EN_AA             0x01
@@ -686,7 +686,6 @@ esp_err_t nrf24_read_rx_payload(nrf24_rx_payload_t *payload)
 /* Clear IRQ flags in STATUS register. */
 esp_err_t nrf24_clear_irq_flags(void)
 {
-    /* 写 1 清除 RX_DR/TX_DS/MAX_RT。 */
     return nrf24_write_register(NRF24_REG_STATUS, NRF24_STATUS_RX_DR | NRF24_STATUS_TX_DS | NRF24_STATUS_MAX_RT, NULL);
 }
 

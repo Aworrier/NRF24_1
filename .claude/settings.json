@@ -7,6 +7,10 @@
           {
             "type": "command",
             "command": "for f in $(find /home/dell/HW_proc/NRF24_1 -type f \\( -name '*.bat' -o -name '*.vbs' \\) 2>/dev/null); do sed -i 's/\\r*$/\\r/' \"$f\" 2>/dev/null; done"
+          },
+          {
+            "type": "command",
+            "command": "if git -C /home/dell/HW_proc/NRF24_1 diff --name-only HEAD 2>/dev/null | grep -q '^main/'; then date '+%s' > /home/dell/HW_proc/NRF24_1/.claude/.docs_stale_marker 2>/dev/null; fi"
           }
         ]
       }

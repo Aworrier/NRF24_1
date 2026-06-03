@@ -27,7 +27,7 @@ Tip: add 10uF + 0.1uF decoupling on VCC/GND.
 
 ## 3. First Run / 第一次跑通
 
-1. `./flash.sh` — 一键编译+烧录（自动选串口）
+1. `bash tools/flash.sh` — 一键编译+烧录（自动选串口）
    或手动: `idf.py set-target esp32s3` → `idf.py menuconfig` → `idf.py build` → `idf.py -p <PORT> flash monitor`
 2. Project mode: Tutorial Debug
 3. Application role: RX (first board)
@@ -43,7 +43,7 @@ Repeat for TX board (role = TX) and keep channel/data rate/address consistent.
 ## 5. Next Steps / 下一步
 
 - Minimal steps: [quickstart.md](quickstart.md)
-- One-click flash: `./flash.sh`
+- One-click flash: `bash tools/flash.sh`
 - PC GUI controller: [pc_gui_workflow.md](pc_gui_workflow.md)
 - Code reading order: [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md)
 - Troubleshooting: [debug-playbook.md](debug-playbook.md)

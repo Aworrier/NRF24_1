@@ -26,7 +26,7 @@
 
 - 每个 TX 设备是一个独立的 ESP32 + NRF24L01 节点
 - TX 固件编译选项: `CONFIG_NRF24_ROLE_TX=y`
-- RX 固件编译选项: 不定义该宏 (默认RX)
+- RX 固件编译选项: `CONFIG_NRF24_ROLE_RX=y`
 - 干扰源 (JAM) 本质上是运行TX固件的设备,仅使用 `JAM ON/OFF` 功能
 - 每个设备通过独立串口(或WiFi TCP)连接到PC
 

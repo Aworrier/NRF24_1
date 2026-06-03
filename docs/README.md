@@ -30,7 +30,7 @@
 
 ## Tools / 工具
 
-- `../flash.sh` — 一键烧录脚本（选串口 → 编译 → 烧录 → 监视）
+- `../tools/flash.sh` — 一键烧录脚本（选串口 → 编译 → 烧录 → 监视）
 - [pc_gui_workflow.md](pc_gui_workflow.md): 上位机 GUI 工作流程与 JAM 干扰源使用
 - `../CLI_REFERENCE.md` — ESP-IDF 命令行参考手册
 
