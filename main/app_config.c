@@ -290,11 +290,16 @@ esp_err_t app_nrf24_setup_addresses(void)
     ESP_RETURN_ON_ERROR(nrf24_set_tx_address(tx, aw), TAG, "set tx address failed");
     ESP_RETURN_ON_ERROR(nrf24_set_rx_address(0, pipe0, aw), TAG, "set pipe0 addr failed");
 
+    /* 初始化地址缓存（用于 STATUS 查询） */
+    strncpy(s_tx_addr_hex, CONFIG_NRF24_TX_ADDR, sizeof(s_tx_addr_hex) - 1);
+    strncpy(s_rx0_addr_hex, CONFIG_NRF24_PIPE0_ADDR, sizeof(s_rx0_addr_hex) - 1);
+
     ESP_LOGI(TAG, "ADDR cfg: aw=%u pipe0=%s tx=%s", (unsigned)aw,
              CONFIG_NRF24_PIPE0_ADDR, CONFIG_NRF24_TX_ADDR);
 
     /* 根据 menuconfig 决定是否启用 PIPE1 */
 #if CONFIG_NRF24_ENABLE_PIPE1
+    strncpy(s_rx1_addr_hex, CONFIG_NRF24_PIPE1_ADDR, sizeof(s_rx1_addr_hex) - 1);
     ESP_LOGI(TAG, "ADDR cfg: pipe1=%s", CONFIG_NRF24_PIPE1_ADDR);
     ESP_RETURN_ON_ERROR(nrf24_set_rx_address(1, pipe1, aw), TAG, "set pipe1 addr failed");
 
@@ -305,6 +310,143 @@ esp_err_t app_nrf24_setup_addresses(void)
     ESP_RETURN_ON_ERROR(nrf24_enable_rx_pipes(0x01), TAG, "enable pipes failed");
 #endif
 
+    return ESP_OK;
+}
+
+/*
+ * =========================================================================
+ * 运行时地址缓存。
+ *
+ * 保存最近一次设置的 TX/RX 地址的 hex 字符串副本，
+ * 用于 STATUS 查询时返回当前地址配置。
+ * =========================================================================
+ */
+static char s_tx_addr_hex[16] = {0};
+static char s_rx0_addr_hex[16] = {0};
+static char s_rx1_addr_hex[16] = {0};
+
+/* 当前运行角色缓存（用于 STATUS 查询） */
+static bool s_current_role_is_tx = true;
+
+/*
+ * 运行时设置 NRF24 TX 地址。
+ *
+ * 从 hex 字符串解析地址，写入 NRF24 TX_ADDR 寄存器，
+ * 同时更新 PIPE0 地址（Enhanced ShockBurst 要求 PIPE0 == TX_ADDR 以接收 ACK）。
+ */
+esp_err_t app_nrf24_set_tx_address_runtime(const char *hex)
+{
+    uint8_t addr[5] = {0};
+    const size_t aw = CONFIG_NRF24_ADDR_WIDTH;
+
+    ESP_RETURN_ON_FALSE(app_hex_to_addr(hex, addr, aw),
+                        ESP_ERR_INVALID_ARG, TAG, "invalid TX address hex");
+    ESP_RETURN_ON_ERROR(nrf24_set_tx_address(addr, aw), TAG, "set tx address failed");
+    ESP_RETURN_ON_ERROR(nrf24_set_rx_address(0, addr, aw), TAG, "set pipe0 addr failed");
+
+    /* 更新缓存 */
+    strncpy(s_tx_addr_hex, hex, sizeof(s_tx_addr_hex) - 1);
+    s_tx_addr_hex[sizeof(s_tx_addr_hex) - 1] = '\0';
+    strncpy(s_rx0_addr_hex, hex, sizeof(s_rx0_addr_hex) - 1);
+    s_rx0_addr_hex[sizeof(s_rx0_addr_hex) - 1] = '\0';
+
+    ESP_LOGI(TAG, "ADDR runtime: TX=%s (aw=%u)", hex, (unsigned)aw);
+    return ESP_OK;
+}
+
+/*
+ * 运行时设置 NRF24 RX 管道地址。
+ */
+esp_err_t app_nrf24_set_rx_address_runtime(uint8_t pipe, const char *hex)
+{
+    ESP_RETURN_ON_FALSE(pipe < 6, ESP_ERR_INVALID_ARG, TAG, "invalid pipe");
+
+    uint8_t addr[5] = {0};
+    const size_t aw = CONFIG_NRF24_ADDR_WIDTH;
+
+    if (pipe <= 1) {
+        /* Pipe0/1 需要完整地址 */
+        ESP_RETURN_ON_FALSE(app_hex_to_addr(hex, addr, aw),
+                            ESP_ERR_INVALID_ARG, TAG, "invalid RX address hex");
+        ESP_RETURN_ON_ERROR(nrf24_set_rx_address(pipe, addr, aw), TAG, "set rx addr failed");
+    } else {
+        /* Pipe2-5 只需最低字节 */
+        ESP_RETURN_ON_FALSE(strlen(hex) == 2, ESP_ERR_INVALID_ARG, TAG, "pipe2-5 require 1 byte hex");
+        ESP_RETURN_ON_FALSE(app_hex_to_addr(hex, addr, 1),
+                            ESP_ERR_INVALID_ARG, TAG, "invalid RX address hex");
+        ESP_RETURN_ON_ERROR(nrf24_set_rx_address(pipe, addr, 1), TAG, "set rx addr failed");
+    }
+
+    /* 更新缓存 */
+    if (pipe == 0) {
+        strncpy(s_rx0_addr_hex, hex, sizeof(s_rx0_addr_hex) - 1);
+        s_rx0_addr_hex[sizeof(s_rx0_addr_hex) - 1] = '\0';
+    } else if (pipe == 1) {
+        strncpy(s_rx1_addr_hex, hex, sizeof(s_rx1_addr_hex) - 1);
+        s_rx1_addr_hex[sizeof(s_rx1_addr_hex) - 1] = '\0';
+    }
+
+    ESP_LOGI(TAG, "ADDR runtime: RX_P%u=%s", (unsigned)pipe, hex);
+    return ESP_OK;
+}
+
+/*
+ * 获取当前 TX 地址的 hex 字符串。
+ */
+void app_nrf24_get_tx_address_hex(char *hex_out, size_t hex_size)
+{
+    if (hex_out == NULL || hex_size == 0) {
+        return;
+    }
+    if (s_tx_addr_hex[0] != '\0') {
+        strncpy(hex_out, s_tx_addr_hex, hex_size - 1);
+        hex_out[hex_size - 1] = '\0';
+    } else {
+        /* 未通过运行时设置过，返回编译期默认值 */
+        strncpy(hex_out, CONFIG_NRF24_TX_ADDR, hex_size - 1);
+        hex_out[hex_size - 1] = '\0';
+    }
+}
+
+/*
+ * 获取当前 RX 管道地址的 hex 字符串。
+ */
+void app_nrf24_get_rx_address_hex(uint8_t pipe, char *hex_out, size_t hex_size)
+{
+    if (hex_out == NULL || hex_size == 0) {
+        return;
+    }
+
+    const char *src = NULL;
+    if (pipe == 0) {
+        src = s_rx0_addr_hex[0] != '\0' ? s_rx0_addr_hex : CONFIG_NRF24_PIPE0_ADDR;
+    } else if (pipe == 1) {
+        src = s_rx1_addr_hex[0] != '\0' ? s_rx1_addr_hex : CONFIG_NRF24_PIPE1_ADDR;
+    } else {
+        src = "00";
+    }
+
+    strncpy(hex_out, src, hex_size - 1);
+    hex_out[hex_size - 1] = '\0';
+}
+
+/*
+ * 运行时切换 NRF24 工作模式。
+ *
+ * TX 模式: 停止监听（PRIM_RX=0），进入 PTX 模式。
+ * RX 模式: 开始监听（PRIM_RX=1），进入 PRX 模式。
+ */
+esp_err_t app_nrf24_switch_role(bool is_tx)
+{
+    s_current_role_is_tx = is_tx;
+
+    if (is_tx) {
+        ESP_RETURN_ON_ERROR(nrf24_stop_listening(), TAG, "switch to TX failed");
+    } else {
+        ESP_RETURN_ON_ERROR(nrf24_start_listening(), TAG, "switch to RX failed");
+    }
+
+    ESP_LOGI(TAG, "ROLE switched to %s", is_tx ? "TX" : "RX");
     return ESP_OK;
 }
 

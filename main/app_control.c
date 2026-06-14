@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "app_config.h"
 #include "app_stats.h"
 #include "app_tx.h"
 #include "freertos/FreeRTOS.h"
@@ -216,6 +217,14 @@ static bool app_token_eq(const char *a, const char *b)
  */
 static void app_reply_stats(const app_control_io_t *io)
 {
+    /* 获取当前地址信息（TX 和 RX 角色均需要） */
+    char tx_addr[16] = {0};
+    char rx0_addr[16] = {0};
+    char rx1_addr[16] = {0};
+    app_nrf24_get_tx_address_hex(tx_addr, sizeof(tx_addr));
+    app_nrf24_get_rx_address_hex(0, rx0_addr, sizeof(rx0_addr));
+    app_nrf24_get_rx_address_hex(1, rx1_addr, sizeof(rx1_addr));
+
 #if defined(CONFIG_NRF24_ROLE_TX)
     /* TX 角色：输出发送统计 */
     app_mac_mode_t mode = APP_MAC_ALOHA;
@@ -228,7 +237,8 @@ static void app_reply_stats(const app_control_io_t *io)
     const app_tx_stats_t *tx = app_stats_tx_get();
     app_control_replyf(io,
         "STAT role=TX enabled=%d mac=%s q=%u slot_ms=%lu csma_win=%lu slot_limit=%lu "
-        "queued=%lu sent=%lu ack_ok=%lu ack_fail=%lu retries_sum=%lu retries_max=%lu next_seq=%u",
+        "queued=%lu sent=%lu ack_ok=%lu ack_fail=%lu retries_sum=%lu retries_max=%lu next_seq=%u "
+        "tx_addr=%s rx0_addr=%s rx1_addr=%s",
         app_tx_is_enabled() ? 1 : 0,
         app_tx_mac_mode_name(mode),
         (unsigned)q,
@@ -241,13 +251,17 @@ static void app_reply_stats(const app_control_io_t *io)
         (unsigned long)tx->tx_fail,
         (unsigned long)tx->retries_sum,
         (unsigned long)tx->retries_max,
-        (unsigned)tx->next_seq);
+        (unsigned)tx->next_seq,
+        tx_addr,
+        rx0_addr,
+        rx1_addr);
 #else
     /* RX 角色：输出接收统计 */
     const app_rx_stats_t *rx = app_stats_rx_get();
     app_control_replyf(io,
         "STAT role=RX rx_pkt=%lu frame_ok=%lu crc_fail=%lu magic_fail=%lu "
-        "len_fail=%lu dup=%lu ooo=%lu gap=%lu last_seq=%u",
+        "len_fail=%lu dup=%lu ooo=%lu gap=%lu last_seq=%u "
+        "tx_addr=%s rx0_addr=%s rx1_addr=%s",
         (unsigned long)rx->rx_packets,
         (unsigned long)rx->frame_ok,
         (unsigned long)rx->crc_fail,
@@ -256,7 +270,10 @@ static void app_reply_stats(const app_control_io_t *io)
         (unsigned long)rx->seq_dup,
         (unsigned long)rx->seq_out_of_order,
         (unsigned long)rx->seq_gap,
-        (unsigned)rx->last_seq);
+        (unsigned)rx->last_seq,
+        tx_addr,
+        rx0_addr,
+        rx1_addr);
 #endif
 }
 
@@ -312,12 +329,140 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
             "BURST <count> <interval_ms> <ascii>, "
             "BURSTHEX <count> <interval_ms> <hex>, "
             "JAM <ON|OFF>, "
+            "MODE <TX|RX>, "
+            "ADDR <TX|RX0|RX1> <hex>, "
             "STOP, "
             "STATUS, "
             "RESETSTATS");
 #else
-        app_control_reply(io, "CMD: STATUS, RESETSTATS");
+        app_control_reply(io,
+            "CMD: MODE <TX|RX>, "
+            "ADDR <TX|RX0|RX1> <hex>, "
+            "STATUS, "
+            "RESETSTATS");
 #endif
+        return;
+    }
+
+    /*
+     * 命令: MODE <TX|RX> — 切换 NRF24 工作模式
+     *
+     * MODE TX: 切换到发送模式（PTX），停止监听。
+     * MODE RX: 切换到接收模式（PRX），开始监听。
+     *
+     * 注意: TX 编译版本下，MODE RX 仅切换 NRF24 到监听模式，
+     *       不包含协议解析（需 RX 编译版本）。
+     *       RX 编译版本下，MODE TX 仅切换 NRF24 到发射模式。
+     */
+    if (strncmp(cmd, "MODE", 4) == 0) {
+        char *p = app_trim_left(cmd + 4);
+
+        /* 无参数：查询当前模式 */
+        if (*p == '\0') {
+#if defined(CONFIG_NRF24_ROLE_TX)
+            app_control_reply(io, "OK MODE TX (compiled as TX)");
+#else
+            app_control_reply(io, "OK MODE RX (compiled as RX)");
+#endif
+            return;
+        }
+
+        char mode_token[4] = {0};
+        size_t idx = 0;
+        while (*p != '\0' && !isspace((int)(unsigned char)*p) && idx + 1 < sizeof(mode_token)) {
+            mode_token[idx++] = *p++;
+        }
+        mode_token[idx] = '\0';
+
+        if (app_token_eq(mode_token, "TX")) {
+            /* 切换到发送模式 */
+#if defined(CONFIG_NRF24_ROLE_TX)
+            app_nrf24_switch_role(true);
+            app_tx_set_enabled(true);
+            app_control_reply(io, "OK MODE TX");
+#else
+            /* RX 编译版本：尝试切换到 TX 模式 */
+            app_nrf24_switch_role(true);
+            app_control_reply(io, "OK MODE TX (note: compiled as RX, no TX task)");
+#endif
+        } else if (app_token_eq(mode_token, "RX")) {
+#if defined(CONFIG_NRF24_ROLE_TX)
+            /* TX 编译版本：停止发送并进入监听模式 */
+            app_tx_set_enabled(false);
+            app_tx_abort();
+            app_nrf24_switch_role(false);
+            app_control_reply(io, "OK MODE RX (note: compiled as TX, no RX parse)");
+#else
+            app_nrf24_switch_role(false);
+            app_control_reply(io, "OK MODE RX");
+#endif
+        } else {
+            app_control_reply(io, "ERR usage: MODE <TX|RX>");
+        }
+        return;
+    }
+
+    /*
+     * 命令: ADDR <type> <hex> — 运行时设置 NRF24 地址
+     *
+     * ADDR TX  <hex>  : 设置 TX 地址和 PIPE0 地址（需一致）
+     * ADDR RX0 <hex>  : 设置 PIPE0 接收地址
+     * ADDR RX1 <hex>  : 设置 PIPE1 接收地址
+     *
+     * hex 格式: 大写十六进制字符串，长度 = address_width * 2。
+     *   例如 5 字节地址: "E7E7E7E7E7"
+     *   例如 3 字节地址: "E7E7E7"
+     */
+    if (strncmp(cmd, "ADDR", 4) == 0) {
+        char *p = app_trim_left(cmd + 4);
+
+        /* 无参数：查询当前地址 */
+        if (*p == '\0') {
+            char tx_addr[16] = {0};
+            char rx0_addr[16] = {0};
+            char rx1_addr[16] = {0};
+            app_nrf24_get_tx_address_hex(tx_addr, sizeof(tx_addr));
+            app_nrf24_get_rx_address_hex(0, rx0_addr, sizeof(rx0_addr));
+            app_nrf24_get_rx_address_hex(1, rx1_addr, sizeof(rx1_addr));
+            app_control_replyf(io, "OK ADDR TX=%s RX0=%s RX1=%s", tx_addr, rx0_addr, rx1_addr);
+            return;
+        }
+
+        /* 解析地址类型 */
+        char type_token[4] = {0};
+        size_t idx = 0;
+        while (*p != '\0' && !isspace((int)(unsigned char)*p) && idx + 1 < sizeof(type_token)) {
+            type_token[idx++] = *p++;
+        }
+        type_token[idx] = '\0';
+        p = app_trim_left(p);
+
+        if (*p == '\0') {
+            app_control_reply(io, "ERR usage: ADDR <TX|RX0|RX1> <hex>");
+            return;
+        }
+
+        if (app_token_eq(type_token, "TX")) {
+            if (app_nrf24_set_tx_address_runtime(p) == ESP_OK) {
+                app_control_replyf(io, "OK ADDR TX=%s", p);
+            } else {
+                app_control_reply(io, "ERR invalid TX address hex");
+            }
+        } else if (app_token_eq(type_token, "RX0")) {
+            if (app_nrf24_set_rx_address_runtime(0, p) == ESP_OK) {
+                app_control_replyf(io, "OK ADDR RX0=%s", p);
+            } else {
+                app_control_reply(io, "ERR invalid RX0 address hex");
+            }
+        } else if (app_token_eq(type_token, "RX1")) {
+            if (app_nrf24_set_rx_address_runtime(1, p) == ESP_OK) {
+                app_control_replyf(io, "OK ADDR RX1=%s", p);
+            } else {
+                app_control_reply(io, "ERR invalid RX1 address hex");
+            }
+        } else {
+            app_control_reply(io, "ERR usage: ADDR <TX|RX0|RX1> <hex>");
+        }
         return;
     }
 

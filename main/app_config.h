@@ -95,6 +95,61 @@ void app_build_nrf24_config(nrf24_config_t *cfg);
 esp_err_t app_nrf24_setup_addresses(void);
 
 /*
+ * 运行时设置 NRF24 TX 地址。
+ *
+ * 参数:
+ *   hex: hex 地址字符串（如 "E7E7E7E7E7"），长度必须 = address_width * 2。
+ *
+ * 返回值:
+ *   ESP_OK: 设置成功。
+ *   其他:   hex 格式无效或 SPI 写入失败。
+ */
+esp_err_t app_nrf24_set_tx_address_runtime(const char *hex);
+
+/*
+ * 运行时设置 NRF24 RX 管道地址。
+ *
+ * 参数:
+ *   pipe: 管道号（0-5），pipe0/1 需要完整地址，pipe2-5 只需要 1 字节。
+ *   hex:  hex 地址字符串，长度取决于管道号。
+ *
+ * 返回值:
+ *   ESP_OK: 设置成功。
+ *   其他:   参数无效或 SPI 写入失败。
+ */
+esp_err_t app_nrf24_set_rx_address_runtime(uint8_t pipe, const char *hex);
+
+/*
+ * 获取当前 TX 地址的 hex 字符串表示（用于 STATUS 查询）。
+ *
+ * 参数:
+ *   hex_out:  输出 hex 字符串缓冲区。
+ *   hex_size: 缓冲区大小（至少 address_width*2+1）。
+ */
+void app_nrf24_get_tx_address_hex(char *hex_out, size_t hex_size);
+
+/*
+ * 获取当前 RX pipe0 地址的 hex 字符串表示。
+ *
+ * 参数:
+ *   hex_out:  输出 hex 字符串缓冲区。
+ *   hex_size: 缓冲区大小（至少 address_width*2+1）。
+ */
+void app_nrf24_get_rx_address_hex(uint8_t pipe, char *hex_out, size_t hex_size);
+
+/*
+ * 运行时切换 NRF24 工作模式。
+ *
+ * 参数:
+ *   is_tx: true=发送模式(PTX), false=接收模式(PRX)。
+ *
+ * 返回值:
+ *   ESP_OK: 切换成功。
+ *   其他:   SPI 操作失败。
+ */
+esp_err_t app_nrf24_switch_role(bool is_tx);
+
+/*
  * 打印启动配置日志。
  *
  * 在调试模式（CONFIG_NRF24_MODE_TUTORIAL_DEBUG）下打印完整引脚映射和射频参数；

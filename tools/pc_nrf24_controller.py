@@ -49,6 +49,12 @@ class Nrf24ControllerApp:
         self.schedule_time_var = tk.StringVar(value="11:05:00")
         self.scheduled_send_job = None
 
+        # 新增：角色模式与地址配置
+        self.role_mode_var = tk.StringVar(value="TX")
+        self.tx_addr_var = tk.StringVar(value="E7E7E7E7E7")
+        self.rx0_addr_var = tk.StringVar(value="E7E7E7E7E7")
+        self.rx1_addr_var = tk.StringVar(value="C2C2C2C2C2")
+
         self._load_persisted_config()
         if initial_config:
             self._apply_initial_config(initial_config)
@@ -71,6 +77,9 @@ class Nrf24ControllerApp:
             "slot_ms": tk.StringVar(value="-"),
             "csma_win": tk.StringVar(value="-"),
             "slot_limit": tk.StringVar(value="-"),
+            "tx_addr": tk.StringVar(value="-"),
+            "rx0_addr": tk.StringVar(value="-"),
+            "rx1_addr": tk.StringVar(value="-"),
         }
 
         # 新增以下代码：
@@ -102,6 +111,10 @@ class Nrf24ControllerApp:
             ("slot_ms", self.slot_ms_var),
             ("csma_win", self.csma_win_var),
             ("slot_limit", self.slot_limit_var),
+            ("role_mode", self.role_mode_var),
+            ("tx_addr", self.tx_addr_var),
+            ("rx0_addr", self.rx0_addr_var),
+            ("rx1_addr", self.rx1_addr_var),
         ):
             value = config.get(key)
             if value is not None:
@@ -139,6 +152,10 @@ class Nrf24ControllerApp:
             "slot_ms": self.slot_ms_var.get(),
             "csma_win": self.csma_win_var.get(),
             "slot_limit": self.slot_limit_var.get(),
+            "role_mode": self.role_mode_var.get(),
+            "tx_addr": self.tx_addr_var.get(),
+            "rx0_addr": self.rx0_addr_var.get(),
+            "rx1_addr": self.rx1_addr_var.get(),
             "auto_poll": self.auto_poll_var.get(),
             "enable_tx": self.enable_var.get(),
         }
@@ -181,7 +198,44 @@ class Nrf24ControllerApp:
         tk.Button(conn, text="帮助", command=self._show_help, width=8).grid(row=0, column=15, padx=(6, 6))
 
         # ============================================================
-        # Row 1: Middle section — left (settings) + right (stats)
+        # Row 1: Role & Address configuration
+        # ============================================================
+        role_addr = tk.LabelFrame(self.root, text="角色与地址配置")
+        role_addr.pack(fill=tk.X, padx=8, pady=2)
+
+        # 角色模式选择
+        tk.Label(role_addr, text="角色模式").grid(row=0, column=0, padx=(6, 2), pady=4, sticky="w")
+        tk.OptionMenu(role_addr, self.role_mode_var, "TX", "RX").grid(row=0, column=1, padx=3, pady=4)
+        tk.Button(role_addr, text="应用模式", command=self._apply_role_mode, width=9).grid(
+            row=0, column=2, padx=(6, 8), pady=4)
+
+        # 分隔线
+        tk.Label(role_addr, text="|", fg="#ccc").grid(row=0, column=3, padx=2, pady=4)
+
+        # 发送地址 (TX)
+        tk.Label(role_addr, text="发送地址(TX)").grid(row=0, column=4, padx=(8, 2), pady=4, sticky="w")
+        tk.Entry(role_addr, textvariable=self.tx_addr_var, width=14).grid(row=0, column=5, padx=3, pady=4)
+        tk.Button(role_addr, text="应用TX", command=self._apply_tx_addr, width=7).grid(
+            row=0, column=6, padx=3, pady=4)
+
+        # 接收地址P0 (RX0)
+        tk.Label(role_addr, text="接收地址P0").grid(row=0, column=7, padx=(8, 2), pady=4, sticky="w")
+        tk.Entry(role_addr, textvariable=self.rx0_addr_var, width=14).grid(row=0, column=8, padx=3, pady=4)
+        tk.Button(role_addr, text="应用RX0", command=self._apply_rx0_addr, width=7).grid(
+            row=0, column=9, padx=3, pady=4)
+
+        # 接收地址P1 (RX1)
+        tk.Label(role_addr, text="接收地址P1").grid(row=0, column=10, padx=(8, 2), pady=4, sticky="w")
+        tk.Entry(role_addr, textvariable=self.rx1_addr_var, width=14).grid(row=0, column=11, padx=3, pady=4)
+        tk.Button(role_addr, text="应用RX1", command=self._apply_rx1_addr, width=7).grid(
+            row=0, column=12, padx=3, pady=4)
+
+        # 一键应用全部地址
+        tk.Button(role_addr, text="应用全部地址", command=self._apply_all_addr, width=12).grid(
+            row=0, column=13, padx=(12, 6), pady=4)
+
+        # ============================================================
+        # Row 2: Middle section — left (settings) + right (stats)
         # ============================================================
         middle = tk.Frame(self.root)
         middle.pack(fill=tk.X, padx=8, pady=2)
@@ -271,13 +325,17 @@ class Nrf24ControllerApp:
             ("接收包数", "rx_pkt"),     ("有效帧数", "frame_ok"),
             ("CRC失败", "crc_fail"),    ("序号丢失", "gap"),
             ("重复包", "dup"),          ("乱序包", "ooo"),
+            ("TX地址", "tx_addr"),      ("RX0地址", "rx0_addr"),
+            ("RX1地址", "rx1_addr"),    ("", ""),
         ]
         for i, (label, var_key) in enumerate(stat_grid):
             row = i // 2
             col_base = (i % 2) * 2
             if label:
                 tk.Label(stats, text=label, fg="#555").grid(row=row, column=col_base, sticky="e", padx=(8, 2), pady=1)
-                tk.Label(stats, textvariable=self.stat_vars[var_key], width=7, anchor="w",
+                # 地址字段需要更宽的显示宽度（最多 10 字符）
+                lbl_width = 12 if "地址" in label else 7
+                tk.Label(stats, textvariable=self.stat_vars[var_key], width=lbl_width, anchor="w",
                          relief="sunken", bg="#fafafa").grid(row=row, column=col_base + 1, padx=(0, 8), pady=1)
 
         # ============================================================
@@ -626,6 +684,9 @@ class Nrf24ControllerApp:
             "slot_ms": "slot_ms",
             "csma_win": "csma_win",
             "slot_limit": "slot_limit",
+            "tx_addr": "tx_addr",
+            "rx0_addr": "rx0_addr",
+            "rx1_addr": "rx1_addr",
         }
         for src_key, dst_key in mapping.items():
             if src_key in kv and dst_key in self.stat_vars:
@@ -753,6 +814,58 @@ class Nrf24ControllerApp:
     def _jam_off(self) -> None:
         self._send_line("JAM OFF")
 
+    def _apply_role_mode(self) -> None:
+        """发送 MODE 命令切换 NRF24 工作模式"""
+        mode = self.role_mode_var.get().strip().upper()
+        if mode not in {"TX", "RX"}:
+            messagebox.showerror("错误", "角色模式必须是 TX 或 RX")
+            return
+        self._send_line(f"MODE {mode}")
+
+    def _apply_tx_addr(self) -> None:
+        """设置 TX 地址"""
+        addr = self.tx_addr_var.get().strip().upper()
+        if not addr or not all(c in "0123456789ABCDEF" for c in addr):
+            messagebox.showerror("错误", "地址必须是大写十六进制字符串（如 E7E7E7E7E7）")
+            return
+        self._send_line(f"ADDR TX {addr}")
+
+    def _apply_rx0_addr(self) -> None:
+        """设置 RX PIPE0 地址"""
+        addr = self.rx0_addr_var.get().strip().upper()
+        if not addr or not all(c in "0123456789ABCDEF" for c in addr):
+            messagebox.showerror("错误", "地址必须是大写十六进制字符串（如 E7E7E7E7E7）")
+            return
+        self._send_line(f"ADDR RX0 {addr}")
+
+    def _apply_rx1_addr(self) -> None:
+        """设置 RX PIPE1 地址"""
+        addr = self.rx1_addr_var.get().strip().upper()
+        if not addr or not all(c in "0123456789ABCDEF" for c in addr):
+            messagebox.showerror("错误", "地址必须是大写十六进制字符串（如 C2C2C2C2C2）")
+            return
+        self._send_line(f"ADDR RX1 {addr}")
+
+    def _apply_all_addr(self) -> None:
+        """一键应用全部三个地址"""
+        tx_addr = self.tx_addr_var.get().strip().upper()
+        rx0_addr = self.rx0_addr_var.get().strip().upper()
+        rx1_addr = self.rx1_addr_var.get().strip().upper()
+
+        if not tx_addr or not rx0_addr or not rx1_addr:
+            messagebox.showerror("错误", "所有地址字段不能为空")
+            return
+
+        for name, addr in [("TX", tx_addr), ("RX0", rx0_addr), ("RX1", rx1_addr)]:
+            if not all(c in "0123456789ABCDEF" for c in addr):
+                messagebox.showerror("错误", f"{name} 地址必须是大写十六进制字符串")
+                return
+
+        self._send_line(f"ADDR TX {tx_addr}")
+        self._send_line(f"ADDR RX0 {rx0_addr}")
+        self._send_line(f"ADDR RX1 {rx1_addr}")
+        self._log("已发送全部地址配置命令")
+
     def _parse_schedule_datetime(self, text: str):
         text = text.strip()
         now = datetime.now()
@@ -818,6 +931,14 @@ class Nrf24ControllerApp:
             "9. 时隙设置: 配置时隙长度与 CSMA 窗口，再点「应用时隙设置」。\n"
             "10. 时隙上限: 设置发送任务最多运行 T 个时隙，超过后自动停止。\n"
             "11. JAM 干扰: JAM ON 开启持续载波发射（无ACK），JAM OFF 关闭。用于测试信道干扰场景。\n\n"
+            "12. 角色与地址:\n"
+            "    - 角色模式: 选择 TX（发送）或 RX（接收）模式。\n"
+            "      TX模式: NRF24 进入 PTX 发射模式，可发送数据包。\n"
+            "      RX模式: NRF24 进入 PRX 监听模式，可接收数据包。\n"
+            "    - 发送地址(TX): 设置 NRF24 发送数据包的目标地址。\n"
+            "    - 接收地址P0: 设置 NRF24 管道0的监听地址（TX模式下需与TX地址一致以接收ACK）。\n"
+            "    - 接收地址P1: 设置 NRF24 管道1的监听地址（多对一通信场景）。\n"
+            "    - 地址格式: 大写十六进制，长度 = address_width × 2（如5字节: E7E7E7E7E7）。\n\n"
             "无线连接\n"
             "- 设备会开启 SoftAP，默认 SSID 为 NRF24_CTRL。\n"
             "- 无线模式下先自动发送 AUTH token，再执行命令。\n"
@@ -831,7 +952,7 @@ class Nrf24ControllerApp:
             "- ASCII: 按文本发送，如 HELLO。\n"
             "- HEX: 按十六进制发送，如 101010 或 A1B2C3（必须偶数位）。\n\n"
             "建议流程\n"
-            "连接 -> 启用发送 -> 设置参数 -> 发送突发包 -> 观察统计。"
+            "连接 -> 配置角色/地址 -> 启用发送 -> 设置参数 -> 发送突发包 -> 观察统计。"
         )
         messagebox.showinfo("帮助", text)
 
