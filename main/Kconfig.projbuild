@@ -11,15 +11,13 @@ menu "NRF24 Configuration"
             bool "Release Lite (minimal logs + simple config)"
     endchoice
 
-    choice NRF24_APP_ROLE
-        prompt "Application role"
-        default NRF24_ROLE_TX
+    config NRF24_ROLE_TX
+        bool "TX role (periodic sender)"
+        default y
 
-        config NRF24_ROLE_TX
-            bool "TX role (periodic sender)"
-        config NRF24_ROLE_RX
-            bool "RX role (listener)"
-    endchoice
+    config NRF24_ROLE_RX
+        bool "RX role (listener)"
+        default y
 
     config NRF24_SPI_HOST
         int "SPI host (2=SPI2_HOST, 3=SPI3_HOST)"
@@ -168,18 +166,18 @@ menu "NRF24 Configuration"
     config NRF24_CONTROL_WIFI_RX_SSID
         string "RX wireless control AP SSID"
         default "NRF24_RX"
-        depends on NRF24_CONTROL_WIFI_ENABLE && NRF24_ROLE_RX
+        depends on NRF24_CONTROL_WIFI_ENABLE && NRF24_ROLE_RX && !NRF24_ROLE_TX
 
     config NRF24_CONTROL_WIFI_TX_PREFIX
         string "TX wireless control AP prefix"
         default "NRF24_TX"
-        depends on NRF24_CONTROL_WIFI_ENABLE && NRF24_ROLE_TX
+        depends on NRF24_CONTROL_WIFI_ENABLE && NRF24_ROLE_TX && !NRF24_ROLE_RX
 
     config NRF24_CONTROL_WIFI_TX_ID
         int "TX wireless control AP index"
         range 1 99
         default 1
-        depends on NRF24_CONTROL_WIFI_ENABLE && NRF24_ROLE_TX
+        depends on NRF24_CONTROL_WIFI_ENABLE && NRF24_ROLE_TX && !NRF24_ROLE_RX
 
     config NRF24_CONTROL_WIFI_SSID
         string "Wireless control AP SSID"

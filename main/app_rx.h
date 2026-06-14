@@ -33,7 +33,7 @@
 /*
  * 启动 RX 接收流程。
  *
- * 当编译为 RX 角色时（CONFIG_NRF24_ROLE_RX 未定义，即非 TX）:
+ * 始终创建 RX 基础设施以支持运行时角色切换:
  *   1. 创建 IRQ 事件队列和载荷队列。
  *   2. 安装 IRQ 中断回调（nrf24_irq_queue_install）。
  *   3. 使 NRF24 进入接收监听模式（nrf24_start_listening）。

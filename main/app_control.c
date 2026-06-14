@@ -225,56 +225,56 @@ static void app_reply_stats(const app_control_io_t *io)
     app_nrf24_get_rx_address_hex(0, rx0_addr, sizeof(rx0_addr));
     app_nrf24_get_rx_address_hex(1, rx1_addr, sizeof(rx1_addr));
 
-#if defined(CONFIG_NRF24_ROLE_TX)
-    /* TX 角色：输出发送统计 */
-    app_mac_mode_t mode = APP_MAC_ALOHA;
-    uint8_t q = 0;
-    uint32_t slot_ms = 0;
-    uint32_t csma_win = 0;
-    app_tx_get_mac_config(&mode, &q);
-    app_tx_get_slot_params(&slot_ms, &csma_win);
+    if (app_nrf24_is_tx_mode()) {
+        /* TX 模式：输出发送统计 */
+        app_mac_mode_t mode = APP_MAC_ALOHA;
+        uint8_t q = 0;
+        uint32_t slot_ms = 0;
+        uint32_t csma_win = 0;
+        app_tx_get_mac_config(&mode, &q);
+        app_tx_get_slot_params(&slot_ms, &csma_win);
 
-    const app_tx_stats_t *tx = app_stats_tx_get();
-    app_control_replyf(io,
-        "STAT role=TX enabled=%d mac=%s q=%u slot_ms=%lu csma_win=%lu slot_limit=%lu "
-        "queued=%lu sent=%lu ack_ok=%lu ack_fail=%lu retries_sum=%lu retries_max=%lu next_seq=%u "
-        "tx_addr=%s rx0_addr=%s rx1_addr=%s",
-        app_tx_is_enabled() ? 1 : 0,
-        app_tx_mac_mode_name(mode),
-        (unsigned)q,
-        (unsigned long)slot_ms,
-        (unsigned long)csma_win,
-        (unsigned long)app_tx_get_slot_limit(),
-        (unsigned long)tx->burst_queued,
-        (unsigned long)tx->frame_sent,
-        (unsigned long)tx->tx_ok,
-        (unsigned long)tx->tx_fail,
-        (unsigned long)tx->retries_sum,
-        (unsigned long)tx->retries_max,
-        (unsigned)tx->next_seq,
-        tx_addr,
-        rx0_addr,
-        rx1_addr);
-#else
-    /* RX 角色：输出接收统计 */
-    const app_rx_stats_t *rx = app_stats_rx_get();
-    app_control_replyf(io,
-        "STAT role=RX rx_pkt=%lu frame_ok=%lu crc_fail=%lu magic_fail=%lu "
-        "len_fail=%lu dup=%lu ooo=%lu gap=%lu last_seq=%u "
-        "tx_addr=%s rx0_addr=%s rx1_addr=%s",
-        (unsigned long)rx->rx_packets,
-        (unsigned long)rx->frame_ok,
-        (unsigned long)rx->crc_fail,
-        (unsigned long)rx->magic_fail,
-        (unsigned long)rx->len_fail,
-        (unsigned long)rx->seq_dup,
-        (unsigned long)rx->seq_out_of_order,
-        (unsigned long)rx->seq_gap,
-        (unsigned)rx->last_seq,
-        tx_addr,
-        rx0_addr,
-        rx1_addr);
-#endif
+        const app_tx_stats_t *tx = app_stats_tx_get();
+        app_control_replyf(io,
+            "STAT role=TX enabled=%d mac=%s q=%u slot_ms=%lu csma_win=%lu slot_limit=%lu "
+            "queued=%lu sent=%lu ack_ok=%lu ack_fail=%lu retries_sum=%lu retries_max=%lu next_seq=%u "
+            "tx_addr=%s rx0_addr=%s rx1_addr=%s",
+            app_tx_is_enabled() ? 1 : 0,
+            app_tx_mac_mode_name(mode),
+            (unsigned)q,
+            (unsigned long)slot_ms,
+            (unsigned long)csma_win,
+            (unsigned long)app_tx_get_slot_limit(),
+            (unsigned long)tx->burst_queued,
+            (unsigned long)tx->frame_sent,
+            (unsigned long)tx->tx_ok,
+            (unsigned long)tx->tx_fail,
+            (unsigned long)tx->retries_sum,
+            (unsigned long)tx->retries_max,
+            (unsigned)tx->next_seq,
+            tx_addr,
+            rx0_addr,
+            rx1_addr);
+    } else {
+        /* RX 模式：输出接收统计 */
+        const app_rx_stats_t *rx = app_stats_rx_get();
+        app_control_replyf(io,
+            "STAT role=RX rx_pkt=%lu frame_ok=%lu crc_fail=%lu magic_fail=%lu "
+            "len_fail=%lu dup=%lu ooo=%lu gap=%lu last_seq=%u "
+            "tx_addr=%s rx0_addr=%s rx1_addr=%s",
+            (unsigned long)rx->rx_packets,
+            (unsigned long)rx->frame_ok,
+            (unsigned long)rx->crc_fail,
+            (unsigned long)rx->magic_fail,
+            (unsigned long)rx->len_fail,
+            (unsigned long)rx->seq_dup,
+            (unsigned long)rx->seq_out_of_order,
+            (unsigned long)rx->seq_gap,
+            (unsigned)rx->last_seq,
+            tx_addr,
+            rx0_addr,
+            rx1_addr);
+    }
 }
 
 /*
@@ -320,7 +320,6 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
 
     /* 命令: HELP — 打印命令列表 */
     if (strcmp(cmd, "HELP") == 0) {
-#if defined(CONFIG_NRF24_ROLE_TX)
         app_control_reply(io,
             "CMD: ENABLE <0|1>, "
             "MAC <ALOHA|CSMA> <q_percent>, "
@@ -334,36 +333,23 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
             "STOP, "
             "STATUS, "
             "RESETSTATS");
-#else
-        app_control_reply(io,
-            "CMD: MODE <TX|RX>, "
-            "ADDR <TX|RX0|RX1> <hex>, "
-            "STATUS, "
-            "RESETSTATS");
-#endif
         return;
     }
 
     /*
      * 命令: MODE <TX|RX> — 切换 NRF24 工作模式
      *
-     * MODE TX: 切换到发送模式（PTX），停止监听。
-     * MODE RX: 切换到接收模式（PRX），开始监听。
+     * MODE TX: 切换到发送模式（PTX），启用 TX 发送任务。
+     * MODE RX: 切换到接收模式（PRX），停止 TX 发送并开始监听。
      *
-     * 注意: TX 编译版本下，MODE RX 仅切换 NRF24 到监听模式，
-     *       不包含协议解析（需 RX 编译版本）。
-     *       RX 编译版本下，MODE TX 仅切换 NRF24 到发射模式。
+     * TX 和 RX 功能均已完整编译进固件，可自由切换。
      */
     if (strncmp(cmd, "MODE", 4) == 0) {
         char *p = app_trim_left(cmd + 4);
 
         /* 无参数：查询当前模式 */
         if (*p == '\0') {
-#if defined(CONFIG_NRF24_ROLE_TX)
-            app_control_reply(io, "OK MODE TX (compiled as TX)");
-#else
-            app_control_reply(io, "OK MODE RX (compiled as RX)");
-#endif
+            app_control_reply(io, app_nrf24_is_tx_mode() ? "OK MODE TX" : "OK MODE RX");
             return;
         }
 
@@ -375,27 +361,16 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
         mode_token[idx] = '\0';
 
         if (app_token_eq(mode_token, "TX")) {
-            /* 切换到发送模式 */
-#if defined(CONFIG_NRF24_ROLE_TX)
+            /* 切换到发送模式：停止监听 + 启用 TX */
             app_nrf24_switch_role(true);
             app_tx_set_enabled(true);
             app_control_reply(io, "OK MODE TX");
-#else
-            /* RX 编译版本：尝试切换到 TX 模式 */
-            app_nrf24_switch_role(true);
-            app_control_reply(io, "OK MODE TX (note: compiled as RX, no TX task)");
-#endif
         } else if (app_token_eq(mode_token, "RX")) {
-#if defined(CONFIG_NRF24_ROLE_TX)
-            /* TX 编译版本：停止发送并进入监听模式 */
+            /* 切换到接收模式：禁用并中止 TX + 开始监听 */
             app_tx_set_enabled(false);
             app_tx_abort();
             app_nrf24_switch_role(false);
-            app_control_reply(io, "OK MODE RX (note: compiled as TX, no RX parse)");
-#else
-            app_nrf24_switch_role(false);
             app_control_reply(io, "OK MODE RX");
-#endif
         } else {
             app_control_reply(io, "ERR usage: MODE <TX|RX>");
         }
@@ -466,11 +441,6 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
         return;
     }
 
-    /*
-     * 以下命令仅 TX 角色支持。
-     * RX 角色在此处收到未知命令后会走到末尾的 "ERR unknown command"。
-     */
-#if defined(CONFIG_NRF24_ROLE_TX)
     /* 命令: ENABLE <0|1> — 启用或禁用 TX 发送 */
     if (strncmp(cmd, "ENABLE", 6) == 0) {
         char *p = cmd + 6;
@@ -620,7 +590,14 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
      * count:       帧数（发送多少帧）。
      * interval_ms: 帧间间隔（毫秒），在第一帧发出后开始计时。
      * payload:     载荷数据，BURST 是 ASCII 文本，BURSTHEX 是十六进制。
+     *
+     * 仅在 TX 模式下可用，RX 模式返回错误。
      */
+    if (!app_nrf24_is_tx_mode()) {
+        app_control_reply(io, "ERR RX mode: send not available, use MODE TX first");
+        return;
+    }
+
     bool is_hex = false;
     if (strncmp(cmd, "BURSTHEX", 8) == 0) {
         is_hex = true;
@@ -672,10 +649,6 @@ void app_control_handle_line(const app_control_io_t *io, char *line)
     }
 
     app_control_reply(io, "OK queued");
-#else
-    /* RX 角色：仅支持 STATUS 和 RESETSTATS */
-    app_control_reply(io, "ERR RX role: only STATUS/RESETSTATS supported");
-#endif
 }
 
 /*

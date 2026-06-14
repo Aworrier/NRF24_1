@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <string.h>
 
+#include "app_config.h"
 #include "app_proto.h"
 #include "app_stats.h"
 #include "esp_err.h"
@@ -46,8 +47,6 @@
 
 static const char *TAG = "nrf24_app";
 
-#if defined(CONFIG_NRF24_ROLE_RX)
-
 /* IRQ 事件队列句柄：ISR 写，IRQ 任务读 */
 static QueueHandle_t s_irq_evt_queue;
 
@@ -80,11 +79,17 @@ static void app_irq_task(void *arg)
     while (1) {
         /*
          * 等待 IRQ 事件，超时 100ms。
-         * 使用超时而非 portMAX_DELAY 的原因：
-         *   即使没有 IRQ，也可能有遗留数据在 FIFO 中（例如之前的排空
-         *   循环在读取过程中被中断），所以周期性地检查 FIFO。
+         *
+         * TX 模式下：仅排空事件队列，不访问 SPI（避免与 TX 任务竞争 SPI 总线）。
+         * RX 模式下：正常处理 IRQ 并排空 FIFO。
          */
         bool got_irq_event = (xQueueReceive(s_irq_evt_queue, &evt, pdMS_TO_TICKS(100)) == pdTRUE);
+
+        if (app_nrf24_is_tx_mode()) {
+            /* TX 模式：不访问 SPI，仅消耗 IRQ 事件防止队列堆积 */
+            (void)got_irq_event;
+            continue;
+        }
 
         if (got_irq_event) {
             /* 读取 IRQ 状态，用于日志和诊断 */
@@ -101,7 +106,6 @@ static void app_irq_task(void *arg)
         /*
          * 排空 RX FIFO：循环读取直到 FIFO 为空。
          * nrf24_read_rx_payload 在 FIFO 为空时返回 ESP_ERR_NOT_FOUND 来退出循环。
-         * 每次读取后立即投递到载荷队列（非阻塞，队列满时丢弃）。
          */
         while (1) {
             nrf24_rx_payload_t payload = {0};
@@ -121,12 +125,14 @@ static void app_irq_task(void *arg)
         }
 
 #if CONFIG_NRF24_MODE_TUTORIAL_DEBUG
-        /* 调试模式：每 2 秒输出存活日志 */
-        TickType_t now = xTaskGetTickCount();
-        if ((now - last_diag_tick) >= pdMS_TO_TICKS(2000)) {
-            last_diag_tick = now;
-            uint8_t status = nrf24_get_status();
-            ESP_LOGI(TAG, "RX alive, polling FIFO... status=0x%02X", status);
+        /* 教学调试模式：每 10 秒输出存活日志（仅 RX 模式） */
+        if (!app_nrf24_is_tx_mode()) {
+            TickType_t now = xTaskGetTickCount();
+            if ((now - last_diag_tick) >= pdMS_TO_TICKS(10000)) {
+                last_diag_tick = now;
+                uint8_t status = nrf24_get_status();
+                ESP_LOGI(TAG, "RX alive, polling FIFO... status=0x%02X", status);
+            }
         }
 #endif
     }
@@ -154,10 +160,19 @@ static void app_rx_consumer_task(void *arg)
     (void)arg;
     nrf24_rx_payload_t payload = {0};
     app_rx_stats_t *stats = app_stats_rx();
+    TickType_t last_rx_report_tick = xTaskGetTickCount();
 
     while (1) {
-        /* 阻塞等待载荷数据 */
-        if (xQueueReceive(s_rx_payload_queue, &payload, portMAX_DELAY) == pdTRUE) {
+        /*
+         * 等待载荷数据，超时 5s。
+         * 超时期间若在 RX 模式，打印统计摘要帮助诊断。
+         */
+        if (xQueueReceive(s_rx_payload_queue, &payload, pdMS_TO_TICKS(5000)) == pdTRUE) {
+            /* TX 模式下丢弃所有数据（可能在模式切换瞬间有残留） */
+            if (app_nrf24_is_tx_mode()) {
+                continue;
+            }
+
             app_proto_frame_t frame = {0};
 
             /* 原始包计数 +1（每个从 FIFO 读出的包都计入） */
@@ -166,9 +181,8 @@ static void app_rx_consumer_task(void *arg)
             /* 协议帧解析 */
             app_proto_parse_result_t parse = app_proto_parse_frame(payload.data, payload.len, &frame);
             if (parse != APP_PROTO_PARSE_OK) {
-                /* 解析失败：分类更新错误统计 */
+                /* 解析失败：静默更新错误统计（通过 STATUS 命令可查询） */
                 app_rx_stats_on_parse_result(stats, parse);
-                ESP_LOGW(TAG, "RX invalid frame pipe=%u len=%u", payload.pipe, payload.len);
                 continue;
             }
 
@@ -201,25 +215,40 @@ static void app_rx_consumer_task(void *arg)
                      txt,
                      (unsigned long)stats->frame_ok);
         }
+        else {
+            /* 5 秒无数据：打印统计摘要辅助诊断 */
+            if (!app_nrf24_is_tx_mode()) {
+                TickType_t now = xTaskGetTickCount();
+                if ((now - last_rx_report_tick) >= pdMS_TO_TICKS(5000)) {
+                    last_rx_report_tick = now;
+                    ESP_LOGI(TAG,
+                        "RX stats: pkt=%lu ok=%lu crc=%lu magic=%lu len=%lu dup=%lu gap=%lu last_seq=%u",
+                        (unsigned long)stats->rx_packets,
+                        (unsigned long)stats->frame_ok,
+                        (unsigned long)stats->crc_fail,
+                        (unsigned long)stats->magic_fail,
+                        (unsigned long)stats->len_fail,
+                        (unsigned long)stats->seq_dup,
+                        (unsigned long)stats->seq_gap,
+                        (unsigned)stats->last_seq);
+                }
+            }
+        }
     }
 }
-#endif
 
 /*
  * 启动 RX 接收流程（对外接口）。
  *
- * RX 角色:
- *   创建两个队列 + 安装 IRQ 回调 + 进入监听模式 + 创建两个任务。
+ * 始终创建完整的 RX 基础设施（队列 + IRQ 回调 + 两个任务），
+ * 以支持运行时角色切换。
  *
- * TX 角色:
- *   调用 nrf24_stop_listening 确保芯片不处于接收模式。
- *   因为 TX 端在发送时用到 Enhanced ShockBurst 的 ACK 机制，
- *   需要 PIPE0 RX 地址匹配才能收到 ACK，但芯片保持在 PTX 模式，
- *   不在持续的 PRX 监听状态。
+ * 芯片初始模式由运行时角色决定：
+ *   TX 模式: nrf24_stop_listening() → PTX 模式
+ *   RX 模式: nrf24_start_listening() → PRX 模式
  */
 void app_rx_start(void)
 {
-#if defined(CONFIG_NRF24_ROLE_RX)
     /* 创建队列 */
     s_irq_evt_queue = xQueueCreate(16, sizeof(uint32_t));
     s_rx_payload_queue = xQueueCreate(16, sizeof(nrf24_rx_payload_t));
@@ -229,16 +258,16 @@ void app_rx_start(void)
     /* 安装 IRQ 回调（ISR 中投递事件到队列） */
     ESP_ERROR_CHECK(nrf24_irq_queue_install(s_irq_evt_queue));
 
-    /* 进入 PRX 接收监听模式（PRIM_RX=1, CE=1） */
-    ESP_ERROR_CHECK(nrf24_start_listening());
-
     /* 创建 IRQ 处理任务（高优先级，确保 FIFO 及时排空） */
     xTaskCreate(app_irq_task, "nrf24_irq", 4096, NULL, 9, NULL);
 
     /* 创建载荷消费者任务（解析 + 日志 + 统计） */
     xTaskCreate(app_rx_consumer_task, "nrf24_rx", 4096, NULL, 7, NULL);
-#else
-    /* TX 角色：停止监听，保持 PTX 模式 */
-    ESP_ERROR_CHECK(nrf24_stop_listening());
-#endif
+
+    /* 根据初始运行时角色设置芯片模式 */
+    if (app_nrf24_is_tx_mode()) {
+        ESP_ERROR_CHECK(nrf24_stop_listening());
+    } else {
+        ESP_ERROR_CHECK(nrf24_start_listening());
+    }
 }

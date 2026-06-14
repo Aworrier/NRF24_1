@@ -23,10 +23,16 @@
  */
 
 /*
- * 返回当前编译角色的可读名称。
- * 返回: "TX" 或 "RX"，取决于 CONFIG_NRF24_ROLE_TX 是否定义。
+ * 返回当前运行时的角色名称。
+ * 返回: "TX" 或 "RX"，取决于运行时状态而非编译期宏。
  */
 const char *app_role_name(void);
+
+/*
+ * 查询当前运行时是否为 TX 模式。
+ * 返回: true=TX模式, false=RX模式。
+ */
+bool app_nrf24_is_tx_mode(void);
 
 /*
  * 将 menuconfig 中的速率选项映射为驱动枚举值。

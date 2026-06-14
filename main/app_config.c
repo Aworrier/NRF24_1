@@ -49,22 +49,6 @@ static const char *TAG = "nrf24_app";
 #endif
 
 /*
- * 返回当前编译角色的可读名称。
- *
- * CONFIG_NRF24_ROLE_TX 在 menuconfig 中设置：
- *   启用  → 编译为发送端（TX），启动后可通过控制台发送数据。
- *   禁用 → 编译为接收端（RX），启动后持续监听空中数据。
- */
-const char *app_role_name(void)
-{
-#if defined(CONFIG_NRF24_ROLE_TX)
-    return "TX";
-#else
-    return "RX";
-#endif
-}
-
-/*
  * 将 hex 字符串解析为原始地址字节数组。
  *
  * 解析规则:
@@ -252,6 +236,40 @@ void app_build_nrf24_config(nrf24_config_t *cfg)
 }
 
 /*
+ * =========================================================================
+ * 运行时地址缓存。
+ *
+ * 保存最近一次设置的 TX/RX 地址的 hex 字符串副本，
+ * 用于 STATUS 查询时返回当前地址配置。
+ * =========================================================================
+ */
+static char s_tx_addr_hex[16] = {0};
+static char s_rx0_addr_hex[16] = {0};
+static char s_rx1_addr_hex[16] = {0};
+
+/* 当前运行角色缓存（用于 STATUS 查询） */
+static volatile bool s_current_role_is_tx = true;
+
+/*
+ * 返回当前运行时的角色名称。
+ *
+ * 与旧版不同，不再依赖编译期宏，而是查询运行时状态。
+ * 这使得同一固件可以在 TX 和 RX 之间动态切换。
+ */
+const char *app_role_name(void)
+{
+    return s_current_role_is_tx ? "TX" : "RX";
+}
+
+/*
+ * 查询当前运行时是否为 TX 模式。
+ */
+bool app_nrf24_is_tx_mode(void)
+{
+    return s_current_role_is_tx;
+}
+
+/*
  * 配置 NRF24 地址管道。
  *
  * NRF24 Enhanced ShockBurst 模式的地址机制概述:
@@ -312,21 +330,6 @@ esp_err_t app_nrf24_setup_addresses(void)
 
     return ESP_OK;
 }
-
-/*
- * =========================================================================
- * 运行时地址缓存。
- *
- * 保存最近一次设置的 TX/RX 地址的 hex 字符串副本，
- * 用于 STATUS 查询时返回当前地址配置。
- * =========================================================================
- */
-static char s_tx_addr_hex[16] = {0};
-static char s_rx0_addr_hex[16] = {0};
-static char s_rx1_addr_hex[16] = {0};
-
-/* 当前运行角色缓存（用于 STATUS 查询） */
-static bool s_current_role_is_tx = true;
 
 /*
  * 运行时设置 NRF24 TX 地址。

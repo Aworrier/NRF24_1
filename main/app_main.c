@@ -151,7 +151,7 @@ void app_main(void)
 
     /*
      * 启动完成日志。
-     * role 由 CONFIG_NRF24_ROLE_TX 宏决定。
+     * role 由运行时状态决定（默认为 TX）。
      */
     ESP_LOGI(TAG, "NRF24 app started. role=%s", app_role_name());
 }

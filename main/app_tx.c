@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "app_config.h"
 #include "app_proto.h"
 #include "app_stats.h"
 #include "esp_err.h"
@@ -49,14 +50,10 @@
  *   注意：这不是标准的 802.11 CSMA/CA，而是一个简化的载波侦听策略。
  *   RPD 检测的是"任意信号能量"，无法区分是本网络还是其他网络的信号。
  *
- * 编译条件:
- *   本文件中标记有 #if defined(CONFIG_NRF24_ROLE_TX) 的代码只在 TX 角色下编译。
- *   非 TX 角色提供空桩（stub）函数，所有 API 调用不产生实际效果。
+ * 所有 TX 功能始终编译，通过运行时角色 (app_nrf24_is_tx_mode) 控制是否启用发送。
  */
 
 static const char *TAG = "nrf24_app";
-
-#if defined(CONFIG_NRF24_ROLE_TX)
 
 /*
  * Burst 命令队列元素。
@@ -847,6 +844,9 @@ void app_tx_init(void)
     s_tx_cmd_queue = xQueueCreate(8, sizeof(app_tx_burst_cmd_t));
     ESP_ERROR_CHECK(s_tx_cmd_queue != NULL ? ESP_OK : ESP_ERR_NO_MEM);
 
+    /* 初始启用状态取决于运行时角色 */
+    s_tx_enabled = app_nrf24_is_tx_mode();
+
     xTaskCreate(app_tx_task, "nrf24_tx", 4096, NULL, 8, NULL);
 }
 
@@ -976,109 +976,3 @@ bool app_tx_jam_is_active(void)
 {
     return s_jam_active;
 }
-
-#else
-/*
- * =========================================================================
- * 非 TX 角色的空桩（stub）实现。
- *
- * 当编译为 RX 角色时，这些函数不产生任何实际效果。
- * 这样做的目的是让控制台代码可以在 RX 和 TX 角色下都能编译通过，
- * 而不需要使用 #ifdef 在每个控制台命令处做条件编译。
- *
- * RX 角色下调用这些函数的场景:
- *   - STATUS 命令在 RX 角色下访问 tx stats（返回全零）。
- *   - 控制台在 RX 角色下收到 BURST 命令会先被 handle_line 中的
- *     条件编译拦截（回复 "ERR RX role"），所以这些 stub 通常不会被调用。
- * =========================================================================
- */
-
-const char *app_tx_mac_mode_name(app_mac_mode_t mode)
-{
-    (void)mode;
-    return "N/A";
-}
-
-void app_tx_set_mac_config(app_mac_mode_t mode, uint8_t q_percent)
-{
-    (void)mode;
-    (void)q_percent;
-}
-
-void app_tx_get_mac_config(app_mac_mode_t *mode, uint8_t *q_percent)
-{
-    if (mode != NULL) {
-        *mode = APP_MAC_ALOHA;
-    }
-    if (q_percent != NULL) {
-        *q_percent = 0;
-    }
-}
-
-void app_tx_set_slot_params(uint32_t slot_ms, uint32_t csma_window_slots)
-{
-    (void)slot_ms;
-    (void)csma_window_slots;
-}
-
-void app_tx_get_slot_params(uint32_t *slot_ms, uint32_t *csma_window_slots)
-{
-    if (slot_ms != NULL) {
-        *slot_ms = 0;
-    }
-    if (csma_window_slots != NULL) {
-        *csma_window_slots = 0;
-    }
-}
-
-void app_tx_set_slot_limit(uint32_t limit)
-{
-    (void)limit;
-}
-
-uint32_t app_tx_get_slot_limit(void)
-{
-    return 0;
-}
-
-void app_tx_set_enabled(bool enabled)
-{
-    (void)enabled;
-}
-
-bool app_tx_is_enabled(void)
-{
-    return false;
-}
-
-void app_tx_abort(void)
-{
-}
-
-bool app_tx_submit_burst(uint32_t count, uint32_t interval_ms, const uint8_t *data, size_t len)
-{
-    (void)count;
-    (void)interval_ms;
-    (void)data;
-    (void)len;
-    return false;
-}
-
-void app_tx_jam_start(uint8_t channel_override)
-{
-    (void)channel_override;
-}
-
-void app_tx_jam_stop(void)
-{
-}
-
-bool app_tx_jam_is_active(void)
-{
-    return false;
-}
-
-void app_tx_init(void)
-{
-}
-#endif

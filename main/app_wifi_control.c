@@ -170,7 +170,10 @@ static void app_build_wifi_ssid(char *ssid, size_t ssid_size)
         return;
     }
 
-#if defined(CONFIG_NRF24_ROLE_TX)
+#if defined(CONFIG_NRF24_ROLE_TX) && defined(CONFIG_NRF24_ROLE_RX)
+    /* 双角色固件：使用通用 SSID */
+    snprintf(ssid, ssid_size, "%s", CONFIG_NRF24_CONTROL_WIFI_SSID);
+#elif defined(CONFIG_NRF24_ROLE_TX)
     snprintf(ssid, ssid_size, "%s_%d", CONFIG_NRF24_CONTROL_WIFI_TX_PREFIX, CONFIG_NRF24_CONTROL_WIFI_TX_ID);
 #else
     snprintf(ssid, ssid_size, "%s", CONFIG_NRF24_CONTROL_WIFI_RX_SSID);
